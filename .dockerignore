@@ -1,0 +1,8 @@
+.venv/
+.git/
+.claude/
+openspec/
+__pycache__/
+*.pyc
+*.egg-info/
+.env

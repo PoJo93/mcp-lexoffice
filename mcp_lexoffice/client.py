@@ -1,0 +1,228 @@
+"""Async HTTP client for the Lexware Office (Lexoffice) REST API."""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import subprocess
+from typing import Any
+
+import httpx
+
+BASE_URL = "https://api.lexoffice.io/v1"
+
+
+def _resolve_api_key() -> str:
+    key = os.environ.get("LEXOFFICE_API_KEY", "")
+    if key.startswith("op://"):
+        result = subprocess.run(
+            ["op", "read", key],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"1Password CLI failed: {result.stderr.strip()}")
+        return result.stdout.strip()
+    return key
+
+
+class LexofficeClient:
+    def __init__(self) -> None:
+        api_key = _resolve_api_key()
+        if not api_key:
+            raise RuntimeError(
+                "LEXOFFICE_API_KEY must be set (raw key or op:// reference)"
+            )
+        self._client = httpx.AsyncClient(
+            base_url=BASE_URL,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+            timeout=30.0,
+        )
+        self._semaphore = asyncio.Semaphore(2)  # respect 2 req/s rate limit
+
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json: dict[str, Any] | None = None,
+        accept: str | None = None,
+    ) -> httpx.Response:
+        async with self._semaphore:
+            headers = {}
+            if accept:
+                headers["Accept"] = accept
+            resp = await self._client.request(
+                method, path, params=params, json=json, headers=headers
+            )
+            resp.raise_for_status()
+            return resp
+
+    # ── Profile ──────────────────────────────────────────────────────
+
+    async def get_profile(self) -> dict:
+        resp = await self._request("GET", "/profile")
+        return resp.json()
+
+    # ── Contacts ─────────────────────────────────────────────────────
+
+    async def create_contact(self, data: dict) -> dict:
+        resp = await self._request("POST", "/contacts", json=data)
+        return resp.json()
+
+    async def get_contact(self, contact_id: str) -> dict:
+        resp = await self._request("GET", f"/contacts/{contact_id}")
+        return resp.json()
+
+    async def update_contact(self, contact_id: str, data: dict) -> dict:
+        resp = await self._request("PUT", f"/contacts/{contact_id}", json=data)
+        return resp.json()
+
+    async def filter_contacts(
+        self,
+        *,
+        email: str | None = None,
+        name: str | None = None,
+        number: int | None = None,
+        customer: bool | None = None,
+        vendor: bool | None = None,
+        page: int = 0,
+        size: int = 25,
+    ) -> dict:
+        params: dict[str, Any] = {"page": page, "size": size}
+        if email:
+            params["email"] = email
+        if name:
+            params["name"] = name
+        if number is not None:
+            params["number"] = number
+        if customer is not None:
+            params["customer"] = customer
+        if vendor is not None:
+            params["vendor"] = vendor
+        resp = await self._request("GET", "/contacts", params=params)
+        return resp.json()
+
+    # ── Invoices ─────────────────────────────────────────────────────
+
+    async def create_invoice(
+        self, data: dict, *, finalize: bool = False
+    ) -> dict:
+        params = {}
+        if finalize:
+            params["finalize"] = "true"
+        resp = await self._request(
+            "POST", "/invoices", json=data, params=params or None
+        )
+        return resp.json()
+
+    async def get_invoice(self, invoice_id: str) -> dict:
+        resp = await self._request("GET", f"/invoices/{invoice_id}")
+        return resp.json()
+
+    async def render_invoice_document(self, invoice_id: str) -> dict:
+        resp = await self._request("GET", f"/invoices/{invoice_id}/document")
+        return resp.json()
+
+    async def download_invoice_pdf(self, invoice_id: str) -> bytes:
+        resp = await self._request(
+            "GET",
+            f"/invoices/{invoice_id}/file",
+            accept="application/pdf",
+        )
+        return resp.content
+
+    # ── Quotations ───────────────────────────────────────────────────
+
+    async def create_quotation(
+        self, data: dict, *, finalize: bool = False
+    ) -> dict:
+        params = {}
+        if finalize:
+            params["finalize"] = "true"
+        resp = await self._request(
+            "POST", "/quotations", json=data, params=params or None
+        )
+        return resp.json()
+
+    async def get_quotation(self, quotation_id: str) -> dict:
+        resp = await self._request("GET", f"/quotations/{quotation_id}")
+        return resp.json()
+
+    # ── Credit Notes ─────────────────────────────────────────────────
+
+    async def create_credit_note(
+        self, data: dict, *, finalize: bool = False, preceding_id: str | None = None
+    ) -> dict:
+        params: dict[str, str] = {}
+        if finalize:
+            params["finalize"] = "true"
+        if preceding_id:
+            params["precedingSalesVoucherId"] = preceding_id
+        resp = await self._request(
+            "POST", "/credit-notes", json=data, params=params or None
+        )
+        return resp.json()
+
+    async def get_credit_note(self, credit_note_id: str) -> dict:
+        resp = await self._request("GET", f"/credit-notes/{credit_note_id}")
+        return resp.json()
+
+    # ── Vouchers / Bookkeeping ───────────────────────────────────────
+
+    async def filter_vouchers(
+        self,
+        voucher_type: str,
+        *,
+        voucher_status: str | None = None,
+        page: int = 0,
+        size: int = 25,
+    ) -> dict:
+        params: dict[str, Any] = {
+            "page": page,
+            "size": size,
+            "voucherType": voucher_type,
+        }
+        if voucher_status:
+            params["voucherStatus"] = voucher_status
+        resp = await self._request("GET", "/voucherlist", params=params)
+        return resp.json()
+
+    # ── Files ────────────────────────────────────────────────────────
+
+    async def download_file(self, file_id: str) -> bytes:
+        resp = await self._request(
+            "GET", f"/files/{file_id}", accept="application/octet-stream"
+        )
+        return resp.content
+
+    # ── Payment Conditions ───────────────────────────────────────────
+
+    async def list_payment_conditions(self) -> list[dict]:
+        resp = await self._request("GET", "/payment-conditions")
+        return resp.json()
+
+    # ── Countries ────────────────────────────────────────────────────
+
+    async def list_countries(self) -> list[dict]:
+        resp = await self._request("GET", "/countries")
+        return resp.json()
+
+    # ── Event Subscriptions (Webhooks) ───────────────────────────────
+
+    async def create_event_subscription(self, data: dict) -> dict:
+        resp = await self._request("POST", "/event-subscriptions", json=data)
+        return resp.json()
+
+    async def list_event_subscriptions(self) -> list[dict]:
+        resp = await self._request("GET", "/event-subscriptions")
+        return resp.json()
+
+    async def delete_event_subscription(self, subscription_id: str) -> None:
+        await self._request("DELETE", f"/event-subscriptions/{subscription_id}")

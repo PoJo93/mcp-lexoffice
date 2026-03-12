@@ -1,0 +1,10 @@
+services:
+  mcp-lexoffice:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - LEXOFFICE_API_KEY=${LEXOFFICE_API_KEY}
+      - MCP_TRANSPORT=streamable-http
+      - MCP_PORT=8000
+    restart: unless-stopped

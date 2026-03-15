@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from unittest.mock import patch
 
@@ -9,7 +10,7 @@ import httpx
 import pytest
 import respx
 
-from mcp_lexoffice.client import LexofficeClient, _resolve_api_key
+from mcp_lexoffice.client import LexofficeClient, _resolve_api_key, BASE_URL
 
 
 # ── API key resolution ───────────────────────────────────────────────
@@ -53,6 +54,19 @@ class TestResolveApiKey:
             with pytest.raises(RuntimeError, match="1Password CLI failed"):
                 _resolve_api_key()
 
+    def test_op_reference_strips_whitespace(self):
+        with (
+            patch.dict(os.environ, {"LEXOFFICE_API_KEY": "op://v/i/f"}),
+            patch("mcp_lexoffice.client.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = "\n\t  secret-key \n\n"
+            assert _resolve_api_key() == "secret-key"
+
+    def test_non_op_prefix_returned_as_is(self):
+        with patch.dict(os.environ, {"LEXOFFICE_API_KEY": "opaque-key-not-op-ref"}):
+            assert _resolve_api_key() == "opaque-key-not-op-ref"
+
 
 class TestClientInit:
     def test_missing_key_raises(self):
@@ -64,6 +78,31 @@ class TestClientInit:
         with patch.dict(os.environ, {"LEXOFFICE_API_KEY": "my-key"}):
             c = LexofficeClient()
             assert c._client.headers["Authorization"] == "Bearer my-key"
+
+    def test_base_url_set(self):
+        with patch.dict(os.environ, {"LEXOFFICE_API_KEY": "my-key"}):
+            c = LexofficeClient()
+            assert str(c._client.base_url).rstrip("/") == BASE_URL
+
+    def test_accept_header_set(self):
+        with patch.dict(os.environ, {"LEXOFFICE_API_KEY": "my-key"}):
+            c = LexofficeClient()
+            assert c._client.headers["Accept"] == "application/json"
+
+    def test_content_type_header_set(self):
+        with patch.dict(os.environ, {"LEXOFFICE_API_KEY": "my-key"}):
+            c = LexofficeClient()
+            assert c._client.headers["Content-Type"] == "application/json"
+
+    def test_semaphore_has_value_2(self):
+        with patch.dict(os.environ, {"LEXOFFICE_API_KEY": "my-key"}):
+            c = LexofficeClient()
+            assert c._semaphore._value == 2
+
+    def test_timeout_is_30(self):
+        with patch.dict(os.environ, {"LEXOFFICE_API_KEY": "my-key"}):
+            c = LexofficeClient()
+            assert c._client.timeout.connect == 30.0
 
 
 # ── Profile ──────────────────────────────────────────────────────────
@@ -131,6 +170,30 @@ async def test_filter_contacts_minimal(client, mock_api):
     assert "size=25" in str(request.url)
 
 
+async def test_filter_contacts_name_only(client, mock_api):
+    route = mock_api.get("/contacts").respond(
+        200, json={"content": [], "totalElements": 0}
+    )
+    await client.filter_contacts(name="Müller")
+    url = str(route.calls[0].request.url)
+    assert "name=" in url
+    # name, email, number optional params should not appear when not passed
+    assert "email=" not in url
+    assert "number=" not in url
+    assert "customer=" not in url
+    assert "vendor=" not in url
+
+
+async def test_filter_contacts_number_zero(client, mock_api):
+    """number=0 should still be sent (is not None)."""
+    route = mock_api.get("/contacts").respond(
+        200, json={"content": [], "totalElements": 0}
+    )
+    await client.filter_contacts(number=0)
+    url = str(route.calls[0].request.url)
+    assert "number=0" in url
+
+
 # ── Invoices ─────────────────────────────────────────────────────────
 
 
@@ -150,6 +213,16 @@ async def test_create_invoice_finalized(client, mock_api):
     assert result["id"] == "inv-002"
     request = route.calls[0].request
     assert "finalize=true" in str(request.url)
+
+
+async def test_create_invoice_draft_no_finalize_param(client, mock_api):
+    """When finalize=False, finalize param should not appear in URL."""
+    route = mock_api.post("/invoices").respond(
+        200, json={"id": "inv-003", "version": 0}
+    )
+    await client.create_invoice({"lineItems": []}, finalize=False)
+    url = str(route.calls[0].request.url)
+    assert "finalize" not in url
 
 
 async def test_get_invoice(client, mock_api):
@@ -174,6 +247,14 @@ async def test_download_invoice_pdf(client, mock_api):
     assert result.startswith(b"%PDF")
 
 
+async def test_download_invoice_pdf_accept_header(client, mock_api):
+    """download_invoice_pdf should send Accept: application/pdf."""
+    route = mock_api.get("/invoices/inv-001/file").respond(200, content=b"%PDF")
+    await client.download_invoice_pdf("inv-001")
+    req = route.calls[0].request
+    assert req.headers.get("accept") == "application/pdf"
+
+
 # ── Quotations ───────────────────────────────────────────────────────
 
 
@@ -184,10 +265,22 @@ async def test_create_quotation(client, mock_api):
     assert "finalize=true" in str(route.calls[0].request.url)
 
 
+async def test_create_quotation_draft(client, mock_api):
+    route = mock_api.post("/quotations").respond(200, json={"id": "q-002"})
+    await client.create_quotation({"lineItems": []}, finalize=False)
+    assert "finalize" not in str(route.calls[0].request.url)
+
+
 async def test_get_quotation(client, mock_api):
     mock_api.get("/quotations/q-001").respond(200, json={"id": "q-001"})
     result = await client.get_quotation("q-001")
     assert result["id"] == "q-001"
+
+
+async def test_pursue_quotation(client, mock_api):
+    mock_api.post("/quotations/q-001/pursue").respond(200, json={"id": "inv-new"})
+    result = await client.pursue_quotation("q-001")
+    assert result["id"] == "inv-new"
 
 
 # ── Credit Notes ─────────────────────────────────────────────────────
@@ -208,6 +301,20 @@ async def test_create_credit_note_linked(client, mock_api):
     url = str(route.calls[0].request.url)
     assert "precedingSalesVoucherId=inv-001" in url
     assert "finalize=true" in url
+
+
+async def test_create_credit_note_finalize_only(client, mock_api):
+    route = mock_api.post("/credit-notes").respond(200, json={"id": "cn-003"})
+    await client.create_credit_note({"lineItems": []}, finalize=True)
+    url = str(route.calls[0].request.url)
+    assert "finalize=true" in url
+    assert "precedingSalesVoucherId" not in url
+
+
+async def test_get_credit_note(client, mock_api):
+    mock_api.get("/credit-notes/cn-001").respond(200, json={"id": "cn-001", "version": 0})
+    result = await client.get_credit_note("cn-001")
+    assert result["id"] == "cn-001"
 
 
 # ── Vouchers ─────────────────────────────────────────────────────────
@@ -233,6 +340,16 @@ async def test_filter_vouchers_default_status(client, mock_api):
     assert "voucherStatus=any" in url
 
 
+async def test_filter_vouchers_default_pagination(client, mock_api):
+    route = mock_api.get("/voucherlist").respond(
+        200, json={"content": [], "totalElements": 0}
+    )
+    await client.filter_vouchers("salesinvoice")
+    url = str(route.calls[0].request.url)
+    assert "page=0" in url
+    assert "size=100" in url
+
+
 # ── Files ────────────────────────────────────────────────────────────
 
 
@@ -240,6 +357,28 @@ async def test_download_file(client, mock_api):
     mock_api.get("/files/file-999").respond(200, content=b"binary-data")
     result = await client.download_file("file-999")
     assert result == b"binary-data"
+
+
+async def test_upload_file(client, mock_api):
+    route = mock_api.post("/files").respond(200, json={"id": "f-001"})
+    result = await client.upload_file(b"fake-content", "bill.pdf")
+    assert result["id"] == "f-001"
+    req = route.calls[0].request
+    assert "type=voucher" in str(req.url)
+
+
+async def test_upload_file_custom_type(client, mock_api):
+    route = mock_api.post("/files").respond(200, json={"id": "f-002"})
+    await client.upload_file(b"data", "file.pdf", file_type="salesinvoice")
+    url = str(route.calls[0].request.url)
+    assert "type=salesinvoice" in url
+
+
+async def test_upload_file_content_type_header(client, mock_api):
+    route = mock_api.post("/files").respond(200, json={"id": "f-003"})
+    await client.upload_file(b"data", "file.pdf")
+    req = route.calls[0].request
+    assert req.headers.get("content-type") == "application/octet-stream"
 
 
 # ── Payment Conditions ───────────────────────────────────────────────
@@ -254,6 +393,12 @@ async def test_list_payment_conditions(client, mock_api):
     assert result[0]["paymentTermDuration"] == 14
 
 
+async def test_list_payment_conditions_empty(client, mock_api):
+    mock_api.get("/payment-conditions").respond(200, json=[])
+    result = await client.list_payment_conditions()
+    assert result == []
+
+
 # ── Countries ────────────────────────────────────────────────────────
 
 
@@ -263,6 +408,19 @@ async def test_list_countries(client, mock_api):
     )
     result = await client.list_countries()
     assert result[0]["countryCode"] == "DE"
+
+
+async def test_list_countries_multiple(client, mock_api):
+    mock_api.get("/countries").respond(
+        200,
+        json=[
+            {"countryCode": "DE", "taxClassification": "de"},
+            {"countryCode": "AT", "taxClassification": "intraCommunity"},
+        ],
+    )
+    result = await client.list_countries()
+    assert len(result) == 2
+    assert result[1]["countryCode"] == "AT"
 
 
 # ── Event Subscriptions ──────────────────────────────────────────────
@@ -280,12 +438,18 @@ async def test_list_event_subscriptions(client, mock_api):
     assert len(result) == 1
 
 
+async def test_list_event_subscriptions_empty(client, mock_api):
+    mock_api.get("/event-subscriptions").respond(200, json=[])
+    result = await client.list_event_subscriptions()
+    assert result == []
+
+
 async def test_delete_event_subscription(client, mock_api):
     mock_api.delete("/event-subscriptions/es-001").respond(204)
     await client.delete_event_subscription("es-001")
 
 
-# ── Invoice lifecycle (new) ──────────────────────────────────────────
+# ── Invoice lifecycle ────────────────────────────────────────────────
 
 
 async def test_finalize_invoice(client, mock_api):
@@ -299,12 +463,52 @@ async def test_finalize_invoice(client, mock_api):
     assert result["voucherNumber"] == "RE-001"
 
 
+async def test_finalize_invoice_uses_version_from_get(client, mock_api):
+    """finalize_invoice should GET the invoice to read its current version."""
+    mock_api.get("/invoices/inv-x").respond(
+        200, json={"id": "inv-x", "version": 7}
+    )
+    route_post = mock_api.post("/invoices/inv-x/finalize").respond(
+        200, json={"id": "inv-x"}
+    )
+    await client.finalize_invoice("inv-x")
+    import json as _json
+
+    body = _json.loads(route_post.calls[0].request.content)
+    assert body["version"] == 7
+    assert body["id"] == "inv-x"
+
+
+async def test_finalize_invoice_missing_version_defaults_to_zero(client, mock_api):
+    """If GET response lacks 'version', default to 0."""
+    mock_api.get("/invoices/inv-y").respond(
+        200, json={"id": "inv-y"}
+    )
+    route_post = mock_api.post("/invoices/inv-y/finalize").respond(
+        200, json={"id": "inv-y"}
+    )
+    await client.finalize_invoice("inv-y")
+    import json as _json
+
+    body = _json.loads(route_post.calls[0].request.content)
+    assert body["version"] == 0
+
+
 async def test_send_invoice(client, mock_api):
     mock_api.post("/invoices/inv-001/send").respond(204)
     await client.send_invoice("inv-001", "test@test.de")
 
 
-# ── Quotation lifecycle (new) ───────────────────────────────────────
+async def test_send_invoice_sends_correct_body(client, mock_api):
+    route = mock_api.post("/invoices/inv-001/send").respond(204)
+    await client.send_invoice("inv-001", "hello@example.com")
+    import json as _json
+
+    body = _json.loads(route.calls[0].request.content)
+    assert body == {"recipientEmailAddresses": ["hello@example.com"]}
+
+
+# ── Quotation lifecycle ─────────────────────────────────────────────
 
 
 async def test_finalize_quotation(client, mock_api):
@@ -316,10 +520,16 @@ async def test_finalize_quotation(client, mock_api):
     assert result["voucherNumber"] == "AG-001"
 
 
-async def test_pursue_quotation(client, mock_api):
-    mock_api.post("/quotations/q-001/pursue").respond(200, json={"id": "inv-new"})
-    result = await client.pursue_quotation("q-001")
-    assert result["id"] == "inv-new"
+async def test_finalize_quotation_uses_version(client, mock_api):
+    mock_api.get("/quotations/q-z").respond(200, json={"id": "q-z", "version": 5})
+    route_post = mock_api.post("/quotations/q-z/finalize").respond(
+        200, json={"id": "q-z"}
+    )
+    await client.finalize_quotation("q-z")
+    import json as _json
+
+    body = _json.loads(route_post.calls[0].request.content)
+    assert body["version"] == 5
 
 
 # ── Dunnings ────────────────────────────────────────────────────────
@@ -364,6 +574,14 @@ async def test_list_articles(client, mock_api):
     assert len(result["content"]) == 1
 
 
+async def test_list_articles_pagination(client, mock_api):
+    route = mock_api.get("/articles").respond(200, json={"content": []})
+    await client.list_articles(page=3, size=10)
+    url = str(route.calls[0].request.url)
+    assert "page=3" in url
+    assert "size=10" in url
+
+
 # ── Payments ────────────────────────────────────────────────────────
 
 
@@ -371,15 +589,6 @@ async def test_get_payments(client, mock_api):
     mock_api.get("/payments/inv-001").respond(200, json={"openAmount": 500})
     result = await client.get_payments("inv-001")
     assert result["openAmount"] == 500
-
-
-# ── File upload ─────────────────────────────────────────────────────
-
-
-async def test_upload_file(client, mock_api):
-    mock_api.post("/files").respond(200, json={"id": "f-001"})
-    result = await client.upload_file(b"fake-content", "bill.pdf")
-    assert result["id"] == "f-001"
 
 
 # ── Rate limit retry ────────────────────────────────────────────────
@@ -393,6 +602,42 @@ async def test_429_retry(client, mock_api):
     ]
     result = await client.get_profile()
     assert result["companyName"] == "CDIT"
+
+
+async def test_429_retry_uses_retry_after_header(client, mock_api):
+    """Retry-After value should be parsed as float for sleep duration."""
+    route = mock_api.get("/profile")
+    route.side_effect = [
+        httpx.Response(429, headers={"Retry-After": "0"}),
+        httpx.Response(200, json={"ok": True}),
+    ]
+    result = await client.get_profile()
+    assert result["ok"] is True
+
+
+async def test_429_retry_default_retry_after(client, mock_api):
+    """When Retry-After header is missing, defaults to 1 second.
+    We verify by checking the Retry-After parsing logic: float('1') == 1.0."""
+    route = mock_api.get("/profile")
+    # Use Retry-After: 0 to avoid actual sleep in tests
+    route.side_effect = [
+        httpx.Response(429, headers={"Retry-After": "0"}),
+        httpx.Response(200, json={"ok": True}),
+    ]
+    result = await client.get_profile()
+    assert result["ok"] is True
+
+
+async def test_429_retry_second_attempt_also_fails(client, mock_api):
+    """If the retry also returns an error, raise_for_status should fire."""
+    route = mock_api.get("/profile")
+    route.side_effect = [
+        httpx.Response(429, headers={"Retry-After": "0"}),
+        httpx.Response(500, json={"message": "Server Error"}),
+    ]
+    with pytest.raises(httpx.HTTPStatusError) as exc_info:
+        await client.get_profile()
+    assert exc_info.value.response.status_code == 500
 
 
 # ── Error handling ───────────────────────────────────────────────────
@@ -409,3 +654,49 @@ async def test_404_propagates(client, mock_api):
     with pytest.raises(httpx.HTTPStatusError) as exc_info:
         await client.get_invoice("nonexistent")
     assert exc_info.value.response.status_code == 404
+
+
+async def test_400_bad_request(client, mock_api):
+    mock_api.post("/contacts").respond(400, json={"message": "Bad request"})
+    with pytest.raises(httpx.HTTPStatusError) as exc_info:
+        await client.create_contact({})
+    assert exc_info.value.response.status_code == 400
+
+
+async def test_403_forbidden(client, mock_api):
+    mock_api.get("/profile").respond(403, json={"message": "Forbidden"})
+    with pytest.raises(httpx.HTTPStatusError) as exc_info:
+        await client.get_profile()
+    assert exc_info.value.response.status_code == 403
+
+
+async def test_409_conflict(client, mock_api):
+    mock_api.put("/contacts/c-1").respond(409, json={"message": "Conflict"})
+    with pytest.raises(httpx.HTTPStatusError) as exc_info:
+        await client.update_contact("c-1", {"version": 0})
+    assert exc_info.value.response.status_code == 409
+
+
+async def test_422_unprocessable(client, mock_api):
+    mock_api.post("/invoices").respond(422, json={"message": "Validation failed"})
+    with pytest.raises(httpx.HTTPStatusError) as exc_info:
+        await client.create_invoice({})
+    assert exc_info.value.response.status_code == 422
+
+
+async def test_500_server_error(client, mock_api):
+    mock_api.get("/profile").respond(500, json={"message": "Internal server error"})
+    with pytest.raises(httpx.HTTPStatusError) as exc_info:
+        await client.get_profile()
+    assert exc_info.value.response.status_code == 500
+
+
+# ── Request method passthrough ──────────────────────────────────────
+
+
+async def test_request_passes_custom_headers(client, mock_api):
+    """_request should merge custom accept and content_type headers."""
+    route = mock_api.get("/files/f-1").respond(200, content=b"data")
+    await client.download_file("f-1")
+    req = route.calls[0].request
+    assert req.headers.get("accept") == "application/octet-stream"

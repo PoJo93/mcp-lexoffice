@@ -8,6 +8,9 @@ import subprocess
 from typing import Any
 
 import httpx
+from dotenv import load_dotenv
+
+load_dotenv()
 
 BASE_URL = "https://api.lexoffice.io/v1"
 
@@ -52,15 +55,25 @@ class LexofficeClient:
         *,
         params: dict[str, Any] | None = None,
         json: dict[str, Any] | None = None,
+        content: bytes | None = None,
         accept: str | None = None,
+        content_type: str | None = None,
     ) -> httpx.Response:
         async with self._semaphore:
-            headers = {}
+            headers: dict[str, str] = {}
             if accept:
                 headers["Accept"] = accept
+            if content_type:
+                headers["Content-Type"] = content_type
             resp = await self._client.request(
-                method, path, params=params, json=json, headers=headers
+                method, path, params=params, json=json, content=content, headers=headers
             )
+            if resp.status_code == 429:
+                retry_after = float(resp.headers.get("Retry-After", "1"))
+                await asyncio.sleep(retry_after)
+                resp = await self._client.request(
+                    method, path, params=params, json=json, content=content, headers=headers
+                )
             resp.raise_for_status()
             return resp
 
@@ -126,6 +139,24 @@ class LexofficeClient:
         resp = await self._request("GET", f"/invoices/{invoice_id}")
         return resp.json()
 
+    async def finalize_invoice(self, invoice_id: str) -> dict:
+        resp = await self._request("GET", f"/invoices/{invoice_id}")
+        data = resp.json()
+        version = data.get("version", 0)
+        resp = await self._request(
+            "POST",
+            f"/invoices/{invoice_id}/finalize",
+            json={"id": invoice_id, "version": version},
+        )
+        return resp.json()
+
+    async def send_invoice(self, invoice_id: str, recipient_email: str) -> None:
+        await self._request(
+            "POST",
+            f"/invoices/{invoice_id}/send",
+            json={"recipientEmailAddresses": [recipient_email]},
+        )
+
     async def render_invoice_document(self, invoice_id: str) -> dict:
         resp = await self._request("GET", f"/invoices/{invoice_id}/document")
         return resp.json()
@@ -155,6 +186,24 @@ class LexofficeClient:
         resp = await self._request("GET", f"/quotations/{quotation_id}")
         return resp.json()
 
+    async def finalize_quotation(self, quotation_id: str) -> dict:
+        resp = await self._request("GET", f"/quotations/{quotation_id}")
+        data = resp.json()
+        version = data.get("version", 0)
+        resp = await self._request(
+            "POST",
+            f"/quotations/{quotation_id}/finalize",
+            json={"id": quotation_id, "version": version},
+        )
+        return resp.json()
+
+    async def pursue_quotation(self, quotation_id: str) -> dict:
+        """Convert a finalized quotation into a draft invoice."""
+        resp = await self._request(
+            "POST", f"/quotations/{quotation_id}/pursue"
+        )
+        return resp.json()
+
     # ── Credit Notes ─────────────────────────────────────────────────
 
     async def create_credit_note(
@@ -174,6 +223,36 @@ class LexofficeClient:
         resp = await self._request("GET", f"/credit-notes/{credit_note_id}")
         return resp.json()
 
+    # ── Dunnings ─────────────────────────────────────────────────────
+
+    async def create_dunning(self, data: dict) -> dict:
+        resp = await self._request("POST", "/dunnings", json=data)
+        return resp.json()
+
+    async def render_dunning_document(self, dunning_id: str) -> dict:
+        resp = await self._request("POST", f"/dunnings/{dunning_id}/document")
+        return resp.json()
+
+    # ── Articles ─────────────────────────────────────────────────────
+
+    async def create_article(self, data: dict) -> dict:
+        resp = await self._request("POST", "/articles", json=data)
+        return resp.json()
+
+    async def get_article(self, article_id: str) -> dict:
+        resp = await self._request("GET", f"/articles/{article_id}")
+        return resp.json()
+
+    async def update_article(self, article_id: str, data: dict) -> dict:
+        resp = await self._request("PUT", f"/articles/{article_id}", json=data)
+        return resp.json()
+
+    async def list_articles(self, *, page: int = 0, size: int = 25) -> dict:
+        resp = await self._request(
+            "GET", "/articles", params={"page": page, "size": size}
+        )
+        return resp.json()
+
     # ── Vouchers / Bookkeeping ───────────────────────────────────────
 
     async def filter_vouchers(
@@ -182,19 +261,35 @@ class LexofficeClient:
         *,
         voucher_status: str | None = None,
         page: int = 0,
-        size: int = 25,
+        size: int = 100,
     ) -> dict:
         params: dict[str, Any] = {
             "page": page,
             "size": size,
             "voucherType": voucher_type,
         }
-        if voucher_status:
-            params["voucherStatus"] = voucher_status
+        params["voucherStatus"] = voucher_status or "any"
         resp = await self._request("GET", "/voucherlist", params=params)
         return resp.json()
 
+    # ── Payments ─────────────────────────────────────────────────────
+
+    async def get_payments(self, invoice_id: str) -> dict:
+        resp = await self._request("GET", f"/payments/{invoice_id}")
+        return resp.json()
+
     # ── Files ────────────────────────────────────────────────────────
+
+    async def upload_file(self, file_bytes: bytes, file_name: str, file_type: str = "voucher") -> dict:
+        resp = await self._request(
+            "POST",
+            "/files",
+            params={"type": file_type},
+            content=file_bytes,
+            content_type="application/octet-stream",
+            accept="application/json",
+        )
+        return resp.json()
 
     async def download_file(self, file_id: str) -> bytes:
         resp = await self._request(

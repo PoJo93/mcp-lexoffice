@@ -31,6 +31,16 @@ async def lifespan(mcp: FastMCP):
     yield {"lexoffice": client}
 
 
+def _build_auth():
+    """Build OAuth provider if MCP_AUTH_BASE_URL is set, else None (authless)."""
+    import os
+    base_url = os.environ.get("MCP_AUTH_BASE_URL", "")
+    if not base_url:
+        return None
+    from .auth import SingleUserOAuthProvider
+    return SingleUserOAuthProvider(base_url=base_url)
+
+
 mcp = FastMCP(
     "Lexware Office",
     instructions=(
@@ -41,6 +51,7 @@ mcp = FastMCP(
         "(EUR 150/Stunde), Platform Development (EUR 1200/Tag)."
     ),
     lifespan=lifespan,
+    auth=_build_auth(),
 )
 
 

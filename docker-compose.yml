@@ -7,4 +7,5 @@ services:
       - LEXOFFICE_API_KEY=${LEXOFFICE_API_KEY}
       - MCP_TRANSPORT=streamable-http
       - MCP_PORT=8000
+      - MCP_AUTH_BASE_URL=${MCP_AUTH_BASE_URL:-}
     restart: unless-stopped

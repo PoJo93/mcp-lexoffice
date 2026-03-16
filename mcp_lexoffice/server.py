@@ -93,7 +93,7 @@ def _fmt(data: Any) -> str:
     return json.dumps(data, indent=2, ensure_ascii=False, default=str)
 
 
-def _client(ctx) -> LexofficeClient:
+def _client(ctx: Context) -> LexofficeClient:
     return ctx.lifespan_context["lexoffice"]
 
 
@@ -139,7 +139,7 @@ def _build_address(
 
 
 @mcp.tool
-async def get_profile(ctx) -> str:
+async def get_profile(ctx: Context) -> str:
     """Get the Lexware Office organization profile — company name, tax settings, currency."""
     result = await _client(ctx).get_profile()
     return _fmt(result)
@@ -150,7 +150,7 @@ async def get_profile(ctx) -> str:
 
 @mcp.tool
 async def create_draft_invoice(
-    ctx,
+    ctx: Context,
     recipient_name: Annotated[str, "Company or person name for the invoice recipient"],
     line_items: Annotated[
         str,
@@ -198,7 +198,7 @@ async def create_draft_invoice(
 
 @mcp.tool
 async def finalize_invoice(
-    ctx,
+    ctx: Context,
     invoice_id: Annotated[str, "UUID of the draft invoice to finalize"],
 ) -> str:
     """Finalize a draft invoice — assigns an invoice number and makes it non-editable.
@@ -210,7 +210,7 @@ async def finalize_invoice(
 
 @mcp.tool
 async def send_invoice(
-    ctx,
+    ctx: Context,
     invoice_id: Annotated[str, "UUID of the finalized invoice"],
     recipient_email: Annotated[str, "Email address to send the invoice to"],
 ) -> str:
@@ -226,7 +226,7 @@ async def send_invoice(
 
 @mcp.tool
 async def get_invoice(
-    ctx,
+    ctx: Context,
     invoice_id: Annotated[str, "UUID of the invoice"],
 ) -> str:
     """Get full details for a specific invoice, including a deep link to Lexoffice UI."""
@@ -238,7 +238,7 @@ async def get_invoice(
 
 @mcp.tool
 async def get_invoice_pdf(
-    ctx,
+    ctx: Context,
     invoice_id: Annotated[str, "UUID of the finalized invoice"],
 ) -> str:
     """Render and get the document file ID for an invoice PDF. Invoice must be finalized."""
@@ -248,7 +248,7 @@ async def get_invoice_pdf(
 
 @mcp.tool
 async def list_invoices(
-    ctx,
+    ctx: Context,
     status: Annotated[
         str | None,
         "Filter: draft, open, paidoff, voided, overdue (comma-separated for multiple)",
@@ -279,7 +279,7 @@ async def list_invoices(
 
 @mcp.tool
 async def upload_voucher(
-    ctx,
+    ctx: Context,
     file_content: Annotated[str, "Base64-encoded file content"],
     file_name: Annotated[str, "Original file name (e.g. 'invoice.pdf')"],
     voucher_type: Annotated[str, "Voucher type: purchaseinvoice, receipt, etc."] = "purchaseinvoice",
@@ -303,7 +303,7 @@ async def upload_voucher(
 
 @mcp.tool
 async def list_expenses(
-    ctx,
+    ctx: Context,
     status: Annotated[str | None, "Filter: open, paidoff, voided (comma-separated)"] = None,
     page: Annotated[int, "Page number (0-indexed)"] = 0,
 ) -> str:
@@ -319,7 +319,7 @@ async def list_expenses(
 
 @mcp.tool
 async def get_financial_overview(
-    ctx,
+    ctx: Context,
     months: Annotated[int, "Number of months to include (default 6)"] = 6,
 ) -> str:
     """Get a monthly revenue/expense/net overview. Queries sales and purchase invoices."""
@@ -367,7 +367,7 @@ async def get_financial_overview(
 
 @mcp.tool
 async def get_payment_status(
-    ctx,
+    ctx: Context,
     invoice_id: Annotated[str | None, "UUID of a specific invoice"] = None,
     contact_name: Annotated[str | None, "Search open invoices by contact name"] = None,
 ) -> str:
@@ -408,7 +408,7 @@ async def get_payment_status(
 
 @mcp.tool
 async def search_contacts(
-    ctx,
+    ctx: Context,
     name: Annotated[str | None, "Filter by name (min 3 chars)"] = None,
     email: Annotated[str | None, "Filter by email (min 3 chars)"] = None,
     role: Annotated[str | None, "Filter: customer, vendor, or both"] = None,
@@ -432,7 +432,7 @@ async def search_contacts(
 
 @mcp.tool
 async def get_contact(
-    ctx,
+    ctx: Context,
     contact_id: Annotated[str, "UUID of the contact"],
 ) -> str:
     """Get full details for a specific contact, including deep link."""
@@ -443,7 +443,7 @@ async def get_contact(
 
 @mcp.tool
 async def create_contact(
-    ctx,
+    ctx: Context,
     company_name: Annotated[str | None, "Company name (use this OR person fields)"] = None,
     first_name: Annotated[str | None, "Person first name"] = None,
     last_name: Annotated[str | None, "Person last name"] = None,
@@ -489,7 +489,7 @@ async def create_contact(
 
 @mcp.tool
 async def update_contact(
-    ctx,
+    ctx: Context,
     contact_id: Annotated[str, "UUID of the contact"],
     version: Annotated[int, "Current version number (for optimistic locking)"],
     company_name: Annotated[str | None, "Updated company name"] = None,
@@ -520,7 +520,7 @@ async def update_contact(
 
 @mcp.tool
 async def create_draft_quotation(
-    ctx,
+    ctx: Context,
     recipient_name: Annotated[str, "Company or person name"],
     line_items: Annotated[str, "JSON array of line items: [{name, unit_price, quantity?, unit_name?, description?}]"],
     street: Annotated[str | None, "Recipient street address"] = None,
@@ -558,7 +558,7 @@ async def create_draft_quotation(
 
 @mcp.tool
 async def finalize_quotation(
-    ctx,
+    ctx: Context,
     quotation_id: Annotated[str, "UUID of the draft quotation"],
 ) -> str:
     """Finalize a quotation — assigns Angebotsnummer, makes it sendable."""
@@ -569,7 +569,7 @@ async def finalize_quotation(
 
 @mcp.tool
 async def pursue_quotation_to_invoice(
-    ctx,
+    ctx: Context,
     quotation_id: Annotated[str, "UUID of the finalized quotation"],
 ) -> str:
     """Convert a finalized quotation into a draft invoice (Angebot to Rechnung).
@@ -590,7 +590,7 @@ async def pursue_quotation_to_invoice(
 
 @mcp.tool
 async def create_dunning(
-    ctx,
+    ctx: Context,
     invoice_id: Annotated[str, "UUID of the overdue invoice"],
     note: Annotated[str | None, "Custom dunning text"] = None,
 ) -> str:
@@ -606,7 +606,7 @@ async def create_dunning(
 
 @mcp.tool
 async def render_dunning_pdf(
-    ctx,
+    ctx: Context,
     dunning_id: Annotated[str, "UUID of the dunning"],
 ) -> str:
     """Render a dunning PDF and get the document file ID."""
@@ -618,7 +618,7 @@ async def render_dunning_pdf(
 
 
 @mcp.tool
-async def list_articles(ctx) -> str:
+async def list_articles(ctx: Context) -> str:
     """List all configured service articles (reusable line items)."""
     result = await _client(ctx).list_articles()
     return _fmt(result)
@@ -626,7 +626,7 @@ async def list_articles(ctx) -> str:
 
 @mcp.tool
 async def create_article(
-    ctx,
+    ctx: Context,
     name: Annotated[str, "Article name (e.g. 'Digitale Sprechstunde')"],
     net_price: Annotated[float, "Net price in EUR"],
     unit_name: Annotated[str, "Unit: Stunde, Tag, Pauschal, Stück"] = "Stück",
@@ -652,7 +652,7 @@ async def create_article(
 
 @mcp.tool
 async def get_article(
-    ctx,
+    ctx: Context,
     article_id: Annotated[str, "UUID of the article"],
 ) -> str:
     """Get full details for a specific article."""
@@ -662,7 +662,7 @@ async def get_article(
 
 @mcp.tool
 async def update_article(
-    ctx,
+    ctx: Context,
     article_id: Annotated[str, "UUID of the article"],
     version: Annotated[int, "Current version number (for optimistic locking)"],
     name: Annotated[str | None, "Updated article name"] = None,
@@ -690,7 +690,7 @@ async def update_article(
 
 @mcp.tool
 async def list_vouchers(
-    ctx,
+    ctx: Context,
     voucher_type: Annotated[
         str,
         "Type: salesinvoice, creditnote, orderconfirmation, quotation, deliverynote, "
@@ -713,7 +713,7 @@ async def list_vouchers(
 
 
 @mcp.tool
-async def list_payment_conditions(ctx) -> str:
+async def list_payment_conditions(ctx: Context) -> str:
     """List all configured payment conditions (Zahlungsbedingungen)."""
     result = await _client(ctx).list_payment_conditions()
     return _fmt(result)
@@ -723,7 +723,7 @@ async def list_payment_conditions(ctx) -> str:
 
 
 @mcp.tool
-async def list_countries(ctx) -> str:
+async def list_countries(ctx: Context) -> str:
     """List all countries with their tax classification (DE, intraCommunity, thirdPartyCountry)."""
     result = await _client(ctx).list_countries()
     return _fmt(result)

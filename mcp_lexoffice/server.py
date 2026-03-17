@@ -3,7 +3,7 @@
 import base64
 import json
 from contextlib import asynccontextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Annotated, Any
 
 from fastmcp import FastMCP, Context
@@ -173,7 +173,7 @@ async def create_draft_invoice(
     """
     items = json.loads(line_items)
     data: dict[str, Any] = {
-        "voucherDate": datetime.now().isoformat(),
+        "voucherDate": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000+00:00"),
         "address": _build_address(recipient_name, street, zip_code, city, country_code),
         "lineItems": _build_line_items(items),
         "totalPrice": {"currency": currency},
@@ -537,7 +537,7 @@ async def create_draft_quotation(
     """Create a draft quotation (Angebot) in Lexware Office. Returns ID and deep link."""
     items = json.loads(line_items)
     data: dict[str, Any] = {
-        "voucherDate": datetime.now().isoformat(),
+        "voucherDate": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000+00:00"),
         "address": _build_address(recipient_name, street, zip_code, city, country_code),
         "lineItems": _build_line_items(items),
         "totalPrice": {"currency": currency},

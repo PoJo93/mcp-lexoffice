@@ -210,6 +210,21 @@ async def finalize_invoice(
 
 
 @mcp.tool
+async def delete_draft_invoice(
+    ctx: Context,
+    invoice_id: Annotated[str, "UUID of the draft invoice to delete"],
+) -> str:
+    """Delete a draft invoice. Only works on drafts — finalized invoices cannot be deleted."""
+    invoice = await _client(ctx).get_invoice(invoice_id)
+    status = invoice.get("voucherStatus", "")
+    if status != "draft":
+        return _fmt({"error": f"Cannot delete invoice with status '{status}'. Only drafts can be deleted.", "deepLink": _deep_link(invoice_id)})
+
+    await _client(ctx).delete_invoice(invoice_id)
+    return _fmt({"status": "deleted", "invoice_id": invoice_id})
+
+
+@mcp.tool
 async def send_invoice(
     ctx: Context,
     invoice_id: Annotated[str, "UUID of the finalized invoice"],

@@ -189,7 +189,7 @@ async def test_all_tools_registered():
     expected = {
         "get_profile",
         "search_contacts", "get_contact", "create_contact", "update_contact",
-        "create_draft_invoice", "finalize_invoice", "send_invoice",
+        "create_draft_invoice", "finalize_invoice", "delete_draft_invoice", "send_invoice",
         "get_invoice", "get_invoice_pdf", "list_invoices",
         "upload_voucher",
         "list_expenses", "get_financial_overview", "get_payment_status",
@@ -203,7 +203,7 @@ async def test_all_tools_registered():
 
 async def test_tool_count_is_27():
     tools = await mcp.list_tools()
-    assert len(tools) == 27
+    assert len(tools) == 28
 
 
 # ── Profile tool ─────────────────────────────────────────────────────

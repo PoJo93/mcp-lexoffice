@@ -148,6 +148,9 @@ class LexofficeClient:
         )
         return resp.json()
 
+    async def delete_invoice(self, invoice_id: str) -> None:
+        await self._request("DELETE", f"/invoices/{invoice_id}")
+
     async def get_invoice(self, invoice_id: str) -> dict:
         resp = await self._request("GET", f"/invoices/{invoice_id}")
         return resp.json()

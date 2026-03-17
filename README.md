@@ -8,7 +8,7 @@ Built with [FastMCP 3](https://github.com/jlowin/fastmcp) and designed to work a
 
 ```bash
 # Clone and set up
-git clone https://github.com/CaseyRo/mcp-lexoffice.git
+git clone https://github.com/CDiT-dev/mcp-lexoffice.git
 cd mcp-lexoffice
 python -m venv .venv
 source .venv/bin/activate
@@ -44,7 +44,7 @@ The server loads `.env` automatically via `python-dotenv`.
 ### 3. 1Password CLI reference (for secure local development)
 ```bash
 # .env or environment
-LEXOFFICE_API_KEY=op://Private/lexoffice/API key
+LEXOFFICE_API_KEY=op://Vault/lexoffice/API key
 ```
 If the value starts with `op://`, the server resolves it via `op read` at startup. Requires the [1Password CLI](https://developer.1password.com/docs/cli/) to be installed and authenticated.
 
@@ -250,4 +250,6 @@ mcp-lexoffice/
 
 ## License
 
-Private — Casey does IT (CDIT)
+AGPL-3.0 — see [LICENSE](LICENSE).
+
+Commercial licensing available for enterprise and partner integrations — contact casey@caseydoes.it.

@@ -39,9 +39,7 @@ def _build_auth():
         return None
 
     keycloak_audience = os.environ.get("KEYCLOAK_AUDIENCE", "mcp-lexoffice")
-    base_url = os.environ.get(
-        "MCP_AUTH_BASE_URL", "https://mcp-lexoffice.cdit-dev.de"
-    )
+    base_url = os.environ.get("MCP_AUTH_BASE_URL", "")
 
     from .auth import create_auth, generate_api_key
 

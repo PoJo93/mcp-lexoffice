@@ -13,19 +13,17 @@ MCP server for **Lexware Office** (formerly Lexoffice) — Python + FastMCP 3.
 source .venv/bin/activate
 python -m mcp_lexoffice.server
 # or with 1Password:
-LEXOFFICE_API_KEY='op://Private/ye2v5wotlaqtclt33nnbdeokde/API key' python -m mcp_lexoffice.server
+LEXOFFICE_API_KEY='op://Vault/item-id/API key' python -m mcp_lexoffice.server
 ```
 
 ## Deployment
-- **Server**: ubuntu-smurf (Komodo git-deploy stack `git-mcp-lexoffice`)
-- **Proxy**: Caddy on nebula-1 → `mcp-lexoffice-tmp.cdit-dev.de` → ubuntu-smurf:8001
-- **Docker**: `HOST_PORT=8001` (epaper-backend uses 8000 on ubuntu-smurf)
+- Docker container (see `docker-compose.yml`)
+- Reverse proxy (Caddy/nginx) recommended for HTTPS
+- Configurable host port via `HOST_PORT` env var
 
-## Account Details
-- Company: Casey does IT (CDIT)
-- Tax: Kleinunternehmerregelung (vatfree / small business exemption)
+## Tax Configuration
+- Hardcoded for Kleinunternehmerregelung (vatfree / small business exemption)
 - Default payment terms: "Zahlbar sofort, rein netto"
-- Service catalog: Sprechstunde (€995), Consulting (€150/h), Platform Dev (€1200/d)
 
 ## Tools (27 total)
 - **Invoices**: create_draft_invoice, finalize_invoice, send_invoice, get_invoice, get_invoice_pdf, list_invoices

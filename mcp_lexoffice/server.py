@@ -178,6 +178,7 @@ async def create_draft_invoice(
         "lineItems": _build_line_items(items),
         "totalPrice": {"currency": currency},
         "taxConditions": {"taxType": "vatfree"},
+        "shippingConditions": {"shippingType": "none"},
         "title": title,
     }
     if introduction:
@@ -541,6 +542,7 @@ async def create_draft_quotation(
         "lineItems": _build_line_items(items),
         "totalPrice": {"currency": currency},
         "taxConditions": {"taxType": "vatfree"},
+        "shippingConditions": {"shippingType": "none"},
         "title": title,
     }
     if introduction:

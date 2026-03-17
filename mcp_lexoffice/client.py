@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import subprocess
 from typing import Any
@@ -74,7 +75,19 @@ class LexofficeClient:
                 resp = await self._client.request(
                     method, path, params=params, json=json, content=content, headers=headers
                 )
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                try:
+                    error_body = json.dumps(resp.json(), indent=2, ensure_ascii=False, default=str)
+                except Exception:
+                    error_body = resp.text
+                try:
+                    resp.raise_for_status()
+                except httpx.HTTPStatusError as e:
+                    raise httpx.HTTPStatusError(
+                        f"{e}\nLexoffice response: {error_body}",
+                        request=e.request,
+                        response=e.response,
+                    ) from e
             return resp
 
     # ── Profile ──────────────────────────────────────────────────────

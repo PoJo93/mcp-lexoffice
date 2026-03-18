@@ -62,6 +62,7 @@ All configuration is via environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LEXOFFICE_API_KEY` | *(required)* | Lexoffice API Bearer token (or `op://` reference) |
+| `LEXOFFICE_TAX_TYPE` | *(auto-detect)* | Override tax regime: `vatfree`, `net`, or `gross` |
 | `MCP_TRANSPORT` | `streamable-http` | Transport: `streamable-http`, `sse`, or `stdio` |
 | `MCP_HOST` | `0.0.0.0` | Bind address |
 | `MCP_PORT` | `8000` | Port number |
@@ -193,12 +194,17 @@ mcp-lexoffice.example.com {
 
 ## Tax Configuration
 
-This server is configured for **Kleinunternehmerregelung** (German small business tax exemption):
-- All invoices and quotations use `taxType: "vatfree"` with `taxRatePercentage: 0`
-- No VAT is charged or displayed on documents
-- This is hardcoded as defaults in the tool parameters
+The tax regime is **auto-detected** from the Lexware Office profile API (`GET /v1/profile` → `taxType`):
 
-To use with regular VAT, you would need to modify the `_build_line_items` function and tool defaults.
+| Regime | `taxType` | Default Rate |
+|--------|-----------|-------------|
+| Kleinunternehmerregelung | `vatfree` | 0% |
+| Netto (regular VAT) | `net` | 19% |
+| Brutto (gross VAT) | `gross` | 19% |
+
+- The result is lazy-cached for the server's lifetime (restart to refresh)
+- Override with `LEXOFFICE_TAX_TYPE` env var for testing: `LEXOFFICE_TAX_TYPE=net python -m mcp_lexoffice.server`
+- Per-item `tax_rate` override is available on `create_draft_invoice`, `create_draft_quotation`, and `create_article`
 
 ## Rate Limiting
 
@@ -214,13 +220,14 @@ pip install -e ".[test]"
 python -m pytest tests/ -v
 ```
 
-The test suite includes 204 tests covering:
+The test suite includes 215 tests covering:
 - All 27 MCP tools with parameter variations
 - Client HTTP methods with respx mocks
 - 429 retry logic and rate limiting
 - Error propagation (400, 401, 403, 404, 409, 422, 500)
 - File upload validation (type, size)
 - Helper functions (_build_line_items, _build_address, _deep_link)
+- Multi-tax-regime detection, caching, env override, and per-item rates
 - Overdue calculation edge cases
 
 ## Project Structure

@@ -2,6 +2,7 @@
 
 import base64
 import json
+import os
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 from typing import Annotated, Any
@@ -77,8 +78,8 @@ mcp = FastMCP(
     "Lexware Office",
     instructions=(
         "MCP server for Lexware Office (Lexoffice) — invoices, contacts, quotations, "
-        "and accounting for Casey does IT (CDIT). Tax regime: Kleinunternehmerregelung "
-        "(vatfree, 0% VAT). Default payment terms: Zahlbar sofort, rein netto. "
+        "and accounting. Tax regime is auto-detected from the Lexoffice profile "
+        "(vatfree, net, or gross). Default payment terms: Zahlbar sofort, rein netto. "
         "Service catalog: Digitale Sprechstunde (EUR 995 Pauschal), Consulting "
         "(EUR 150/Stunde), Platform Development (EUR 1200/Tag)."
     ),
@@ -95,7 +96,26 @@ def _client(ctx: Context) -> LexofficeClient:
     return ctx.lifespan_context["lexoffice"]
 
 
-def _build_line_items(items: list[dict]) -> list[dict]:
+DEFAULT_TAX_RATE = {"vatfree": 0, "net": 19, "gross": 19}
+
+
+async def _get_tax_config(ctx: Context) -> dict:
+    """Auto-detect tax regime from profile API, with env var override and lazy caching."""
+    lc = ctx.lifespan_context
+    if "tax_config" in lc:
+        return lc["tax_config"]
+    env_type = os.environ.get("LEXOFFICE_TAX_TYPE", "")
+    if env_type in DEFAULT_TAX_RATE:
+        tax_type = env_type
+    else:
+        profile = await _client(ctx).get_profile()
+        tax_type = profile.get("taxType", "vatfree")
+    config = {"tax_type": tax_type, "default_rate": DEFAULT_TAX_RATE.get(tax_type, 0)}
+    lc["tax_config"] = config
+    return config
+
+
+def _build_line_items(items: list[dict], *, default_tax_rate: int = 0) -> list[dict]:
     """Convert simplified line items to Lexoffice format."""
     result = []
     for item in items:
@@ -107,7 +127,7 @@ def _build_line_items(items: list[dict]) -> list[dict]:
             "unitPrice": {
                 "currency": item.get("currency", "EUR"),
                 "netAmount": item["unit_price"],
-                "taxRatePercentage": 0,
+                "taxRatePercentage": item.get("tax_rate", default_tax_rate),
             },
         }
         if "description" in item:
@@ -152,7 +172,7 @@ async def create_draft_invoice(
     recipient_name: Annotated[str, "Company or person name for the invoice recipient"],
     line_items: Annotated[
         str,
-        "JSON array of line items. Each: {name, unit_price, quantity?, unit_name?, description?}",
+        "JSON array of line items. Each: {name, unit_price, quantity?, unit_name?, description?, tax_rate?}",
     ],
     street: Annotated[str | None, "Recipient street address"] = None,
     zip_code: Annotated[str | None, "Recipient postal code"] = None,
@@ -163,19 +183,22 @@ async def create_draft_invoice(
     title: Annotated[str, "Invoice title"] = "Rechnung",
     introduction: Annotated[str | None, "Introduction text above line items"] = None,
     remark: Annotated[str | None, "Closing remark below line items"] = None,
+    tax_rate: Annotated[int | None, "Override tax rate percentage for all line items"] = None,
 ) -> str:
     """Create a draft invoice in Lexware Office. Returns the invoice ID and a deep link to review it.
 
     Line items example: [{"name": "IT Consulting", "unit_price": 3000, "quantity": 1}]
-    Tax is automatically set to 0% (Kleinunternehmerregelung).
+    Tax regime is auto-detected from the Lexoffice profile. Override per-item via tax_rate field.
     """
     items = json.loads(line_items)
+    tax_config = await _get_tax_config(ctx)
+    effective_rate = tax_rate if tax_rate is not None else tax_config["default_rate"]
     data: dict[str, Any] = {
         "voucherDate": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000+00:00"),
         "address": _build_address(recipient_name, street, zip_code, city, country_code),
-        "lineItems": _build_line_items(items),
+        "lineItems": _build_line_items(items, default_tax_rate=effective_rate),
         "totalPrice": {"currency": currency},
-        "taxConditions": {"taxType": "vatfree"},
+        "taxConditions": {"taxType": tax_config["tax_type"]},
         "shippingConditions": {"shippingType": "none"},
         "title": title,
     }
@@ -536,7 +559,7 @@ async def update_contact(
 async def create_draft_quotation(
     ctx: Context,
     recipient_name: Annotated[str, "Company or person name"],
-    line_items: Annotated[str, "JSON array of line items: [{name, unit_price, quantity?, unit_name?, description?}]"],
+    line_items: Annotated[str, "JSON array of line items: [{name, unit_price, quantity?, unit_name?, description?, tax_rate?}]"],
     street: Annotated[str | None, "Recipient street address"] = None,
     zip_code: Annotated[str | None, "Recipient postal code"] = None,
     city: Annotated[str | None, "Recipient city"] = None,
@@ -546,15 +569,18 @@ async def create_draft_quotation(
     title: Annotated[str, "Quotation title"] = "Angebot",
     introduction: Annotated[str | None, "Introduction text"] = None,
     remark: Annotated[str | None, "Closing remark"] = None,
+    tax_rate: Annotated[int | None, "Override tax rate percentage for all line items"] = None,
 ) -> str:
     """Create a draft quotation (Angebot) in Lexware Office. Returns ID and deep link."""
     items = json.loads(line_items)
+    tax_config = await _get_tax_config(ctx)
+    effective_rate = tax_rate if tax_rate is not None else tax_config["default_rate"]
     data: dict[str, Any] = {
         "voucherDate": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000+00:00"),
         "address": _build_address(recipient_name, street, zip_code, city, country_code),
-        "lineItems": _build_line_items(items),
+        "lineItems": _build_line_items(items, default_tax_rate=effective_rate),
         "totalPrice": {"currency": currency},
-        "taxConditions": {"taxType": "vatfree"},
+        "taxConditions": {"taxType": tax_config["tax_type"]},
         "shippingConditions": {"shippingType": "none"},
         "title": title,
     }
@@ -647,8 +673,11 @@ async def create_article(
     unit_name: Annotated[str, "Unit: Stunde, Tag, Pauschal, Stück"] = "Stück",
     article_type: Annotated[str, "Type: SERVICE or PRODUCT"] = "SERVICE",
     description: Annotated[str | None, "Article description"] = None,
+    tax_rate: Annotated[int | None, "Override tax rate percentage"] = None,
 ) -> str:
-    """Create a reusable service article in Lexware Office. Tax rate is 0% (Kleinunternehmer)."""
+    """Create a reusable service article in Lexware Office. Tax rate is auto-detected from profile."""
+    tax_config = await _get_tax_config(ctx)
+    effective_rate = tax_rate if tax_rate is not None else tax_config["default_rate"]
     data: dict[str, Any] = {
         "title": name,
         "type": article_type,
@@ -656,7 +685,7 @@ async def create_article(
         "price": {
             "netPrice": net_price,
             "currency": "EUR",
-            "taxRatePercentage": 0,
+            "taxRatePercentage": effective_rate,
         },
     }
     if description:

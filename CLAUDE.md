@@ -22,7 +22,11 @@ LEXOFFICE_API_KEY='op://Vault/item-id/API key' python -m mcp_lexoffice.server
 - Configurable host port via `HOST_PORT` env var
 
 ## Tax Configuration
-- Hardcoded for Kleinunternehmerregelung (vatfree / small business exemption)
+- Auto-detected from the Lexoffice profile API (`GET /v1/profile` → `taxType`)
+- Supported regimes: `vatfree` (Kleinunternehmerregelung, 0%), `net` (19%), `gross` (19%)
+- Override with `LEXOFFICE_TAX_TYPE` env var for testing (skips API call)
+- Lazy-cached in `lifespan_context` — server restart clears cache
+- Per-item `tax_rate` override available on invoices, quotations, and articles
 - Default payment terms: "Zahlbar sofort, rein netto"
 
 ## Tools (27 total)

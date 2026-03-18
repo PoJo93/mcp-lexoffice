@@ -11,11 +11,13 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from mcp_lexoffice.server import (
+    DEFAULT_TAX_RATE,
     _build_address,
     _build_line_items,
     _contact_link,
     _deep_link,
     _fmt,
+    _get_tax_config,
     mcp,
 )
 
@@ -30,12 +32,17 @@ class FakeContext:
         self.lifespan_context = {"lexoffice": lexoffice_client}
 
 
-def make_ctx(method_responses: dict[str, object]) -> FakeContext:
+def make_ctx(method_responses: dict[str, object], *, tax_type: str = "vatfree") -> FakeContext:
     """Create a FakeContext with a mock LexofficeClient."""
     client = AsyncMock()
     for method, response in method_responses.items():
         getattr(client, method).return_value = response
-    return FakeContext(client)
+    ctx = FakeContext(client)
+    ctx.lifespan_context["tax_config"] = {
+        "tax_type": tax_type,
+        "default_rate": DEFAULT_TAX_RATE.get(tax_type, 0),
+    }
+    return ctx
 
 
 # ── _fmt ─────────────────────────────────────────────────────────────
@@ -1591,3 +1598,143 @@ async def test_simple_tools_return_valid_json(tool_name):
     ctx = make_ctx({method_map[tool_name]: {"data": "test"}})
     result = await tool_fn(ctx)
     json.loads(result)  # should not raise
+
+
+# ── _get_tax_config ─────────────────────────────────────────────────
+
+
+@pytest.mark.anyio
+async def test_get_tax_config_caches():
+    """Second call should use cached value, not call get_profile again."""
+    client = AsyncMock()
+    client.get_profile.return_value = {"taxType": "net"}
+    ctx = FakeContext(client)
+    config1 = await _get_tax_config(ctx)
+    config2 = await _get_tax_config(ctx)
+    assert config1 is config2
+    client.get_profile.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_get_tax_config_env_override():
+    """LEXOFFICE_TAX_TYPE env var should skip the API call."""
+    client = AsyncMock()
+    ctx = FakeContext(client)
+    with patch.dict(os.environ, {"LEXOFFICE_TAX_TYPE": "net"}):
+        config = await _get_tax_config(ctx)
+    assert config["tax_type"] == "net"
+    assert config["default_rate"] == 19
+    client.get_profile.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_get_tax_config_auto_detect():
+    """Without env var, should read taxType from profile API."""
+    client = AsyncMock()
+    client.get_profile.return_value = {"taxType": "gross"}
+    ctx = FakeContext(client)
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("LEXOFFICE_TAX_TYPE", None)
+        config = await _get_tax_config(ctx)
+    assert config["tax_type"] == "gross"
+    assert config["default_rate"] == 19
+    client.get_profile.assert_called_once()
+
+
+# ── _build_line_items with tax rates ────────────────────────────────
+
+
+def test_build_line_items_default_rate_19():
+    items = [{"name": "Consulting", "unit_price": 150}]
+    result = _build_line_items(items, default_tax_rate=19)
+    assert result[0]["unitPrice"]["taxRatePercentage"] == 19
+
+
+def test_build_line_items_per_item_override():
+    items = [{"name": "Books", "unit_price": 50, "tax_rate": 7}]
+    result = _build_line_items(items, default_tax_rate=19)
+    assert result[0]["unitPrice"]["taxRatePercentage"] == 7
+
+
+# ── Multi-tax-regime tool tests ─────────────────────────────────────
+
+
+@pytest.mark.anyio
+async def test_create_draft_invoice_net_tax():
+    from mcp_lexoffice.server import create_draft_invoice
+
+    ctx = make_ctx({"create_invoice": {"id": "inv-net"}}, tax_type="net")
+    result = await create_draft_invoice(
+        ctx,
+        recipient_name="Net GmbH",
+        line_items='[{"name": "Consulting", "unit_price": 150}]',
+    )
+    call_data = ctx.lifespan_context["lexoffice"].create_invoice.call_args[0][0]
+    assert call_data["taxConditions"]["taxType"] == "net"
+    assert call_data["lineItems"][0]["unitPrice"]["taxRatePercentage"] == 19
+
+
+@pytest.mark.anyio
+async def test_create_draft_invoice_tax_rate_override():
+    from mcp_lexoffice.server import create_draft_invoice
+
+    ctx = make_ctx({"create_invoice": {"id": "inv-override"}}, tax_type="net")
+    result = await create_draft_invoice(
+        ctx,
+        recipient_name="Books GmbH",
+        line_items='[{"name": "Books", "unit_price": 50}]',
+        tax_rate=7,
+    )
+    call_data = ctx.lifespan_context["lexoffice"].create_invoice.call_args[0][0]
+    assert call_data["taxConditions"]["taxType"] == "net"
+    assert call_data["lineItems"][0]["unitPrice"]["taxRatePercentage"] == 7
+
+
+@pytest.mark.anyio
+async def test_create_draft_invoice_gross_tax():
+    from mcp_lexoffice.server import create_draft_invoice
+
+    ctx = make_ctx({"create_invoice": {"id": "inv-gross"}}, tax_type="gross")
+    result = await create_draft_invoice(
+        ctx,
+        recipient_name="Gross GmbH",
+        line_items='[{"name": "Service", "unit_price": 200}]',
+    )
+    call_data = ctx.lifespan_context["lexoffice"].create_invoice.call_args[0][0]
+    assert call_data["taxConditions"]["taxType"] == "gross"
+    assert call_data["lineItems"][0]["unitPrice"]["taxRatePercentage"] == 19
+
+
+@pytest.mark.anyio
+async def test_create_draft_quotation_net_tax():
+    from mcp_lexoffice.server import create_draft_quotation
+
+    ctx = make_ctx({"create_quotation": {"id": "q-net"}}, tax_type="net")
+    result = await create_draft_quotation(
+        ctx,
+        recipient_name="Net GmbH",
+        line_items='[{"name": "Consulting", "unit_price": 150}]',
+    )
+    call_data = ctx.lifespan_context["lexoffice"].create_quotation.call_args[0][0]
+    assert call_data["taxConditions"]["taxType"] == "net"
+    assert call_data["lineItems"][0]["unitPrice"]["taxRatePercentage"] == 19
+
+
+@pytest.mark.anyio
+async def test_create_article_net_tax():
+    from mcp_lexoffice.server import create_article
+
+    ctx = make_ctx({"create_article": {"id": "art-net"}}, tax_type="net")
+    result = await create_article(ctx, name="Consulting", net_price=150)
+    call_data = ctx.lifespan_context["lexoffice"].create_article.call_args[0][0]
+    assert call_data["price"]["taxRatePercentage"] == 19
+
+
+@pytest.mark.anyio
+async def test_create_article_tax_rate_override():
+    from mcp_lexoffice.server import create_article
+
+    ctx = make_ctx({"create_article": {"id": "art-7"}}, tax_type="net")
+    result = await create_article(ctx, name="Books", net_price=50, tax_rate=7)
+    call_data = ctx.lifespan_context["lexoffice"].create_article.call_args[0][0]
+    assert call_data["price"]["taxRatePercentage"] == 7

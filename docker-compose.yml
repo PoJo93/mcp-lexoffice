@@ -13,4 +13,7 @@ services:
       - KEYCLOAK_AUDIENCE=${KEYCLOAK_AUDIENCE:-mcp-lexoffice}
       - KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID:-mcp-lexoffice}
       - KEYCLOAK_CLIENT_SECRET=${KEYCLOAK_CLIENT_SECRET}
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     restart: unless-stopped

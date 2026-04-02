@@ -2,6 +2,7 @@
 
 import base64
 import json
+import logging
 import os
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
@@ -10,6 +11,8 @@ from typing import Annotated, Any
 from fastmcp import FastMCP, Context
 
 from .client import LexofficeClient
+
+logger = logging.getLogger(__name__)
 
 LEXOFFICE_UI = "https://app.lexoffice.de"
 
@@ -40,7 +43,13 @@ def _build_auth():
         return None
 
     keycloak_audience = os.environ.get("KEYCLOAK_AUDIENCE", "mcp-lexoffice")
+    keycloak_client_id = os.environ.get("KEYCLOAK_CLIENT_ID", keycloak_audience)
+    keycloak_client_secret = os.environ.get("KEYCLOAK_CLIENT_SECRET", "")
     base_url = os.environ.get("MCP_AUTH_BASE_URL", "")
+
+    if not keycloak_client_secret:
+        logger.warning("KEYCLOAK_CLIENT_SECRET not set — OIDC proxy auth disabled")
+        return None
 
     from .auth import create_auth, generate_api_key
 
@@ -70,6 +79,8 @@ def _build_auth():
         api_key=api_key,
         keycloak_issuer=keycloak_issuer,
         keycloak_audience=keycloak_audience,
+        keycloak_client_id=keycloak_client_id,
+        keycloak_client_secret=keycloak_client_secret,
         base_url=base_url,
     )
 

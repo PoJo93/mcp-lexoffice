@@ -20,6 +20,8 @@ import hmac
 import logging
 import secrets
 
+from pydantic import AnyHttpUrl
+
 from fastmcp.server.auth import (
     AccessToken,
     MultiAuth,
@@ -85,7 +87,7 @@ def create_auth(
 
     jwt_auth = RemoteAuthProvider(
         token_verifier=jwt_verifier,
-        authorization_servers=[keycloak_issuer],
+        authorization_servers=[AnyHttpUrl(keycloak_issuer)],
         base_url=base_url,
         scopes_supported=["openid"],
         resource_name="Lexoffice MCP Server",

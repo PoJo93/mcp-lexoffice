@@ -12,4 +12,10 @@ services:
       - KEYCLOAK_AUDIENCE=${KEYCLOAK_AUDIENCE:-mcp-lexoffice}
       - KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID:-mcp-lexoffice}
       - KEYCLOAK_CLIENT_SECRET=${KEYCLOAK_CLIENT_SECRET}
+      - FASTMCP_HOME=/data/fastmcp
+    volumes:
+      - fastmcp-data:/data/fastmcp
     restart: unless-stopped
+
+volumes:
+  fastmcp-data:

@@ -9,6 +9,7 @@ from datetime import date, datetime, timezone
 from typing import Annotated, Any
 
 from fastmcp import FastMCP, Context
+from mcp.types import Icon
 
 from .client import LexofficeClient
 
@@ -94,6 +95,12 @@ mcp = FastMCP(
         "Service catalog: Digitale Sprechstunde (EUR 995 Pauschal), Consulting "
         "(EUR 150/Stunde), Platform Development (EUR 1200/Tag)."
     ),
+    icons=[
+        Icon(
+            src="https://www.lexware.de/favicon.ico",
+            mimeType="image/x-icon",
+        ),
+    ],
     lifespan=lifespan,
     auth=_build_auth(),
 )

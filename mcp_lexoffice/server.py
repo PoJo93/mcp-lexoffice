@@ -35,16 +35,14 @@ async def lifespan(mcp: FastMCP):
 
 
 def _build_auth():
-    """Build MultiAuth (Keycloak JWT + Bearer) if KEYCLOAK_ISSUER is set, else None."""
+    """Build OIDCProxy auth if KEYCLOAK_ISSUER is set, else None."""
     import os
-    from pathlib import Path
 
     keycloak_issuer = os.environ.get("KEYCLOAK_ISSUER", "")
     if not keycloak_issuer:
         return None
 
-    keycloak_audience = os.environ.get("KEYCLOAK_AUDIENCE", "mcp-lexoffice")
-    keycloak_client_id = os.environ.get("KEYCLOAK_CLIENT_ID", keycloak_audience)
+    keycloak_client_id = os.environ.get("KEYCLOAK_CLIENT_ID", "mcp-lexoffice")
     keycloak_client_secret = os.environ.get("KEYCLOAK_CLIENT_SECRET", "")
     base_url = os.environ.get("MCP_AUTH_BASE_URL", "")
 
@@ -52,37 +50,13 @@ def _build_auth():
         logger.warning("KEYCLOAK_CLIENT_SECRET not set — OIDC proxy auth disabled")
         return None
 
-    from .auth import create_auth, generate_api_key
-
-    api_key = os.environ.get("LEXOFFICE_MCP_API_KEY", "")
-    if not api_key:
-        api_key = generate_api_key()
-        os.environ["LEXOFFICE_MCP_API_KEY"] = api_key
-
-        env_path = Path(".env")
-        try:
-            if env_path.exists():
-                content = env_path.read_text()
-                if "LEXOFFICE_MCP_API_KEY" not in content:
-                    with env_path.open("a") as f:
-                        f.write(f"\nLEXOFFICE_MCP_API_KEY={api_key}\n")
-            else:
-                env_path.write_text(f"LEXOFFICE_MCP_API_KEY={api_key}\n")
-        except OSError:
-            pass
-
-        print("\n" + "=" * 60)
-        print("  LEXOFFICE MCP API KEY (for Claude Code / Bearer auth)")
-        print(f"  {api_key}")
-        print("=" * 60 + "\n")
+    from .auth import create_auth
 
     return create_auth(
-        api_key=api_key,
+        base_url=base_url,
         keycloak_issuer=keycloak_issuer,
-        keycloak_audience=keycloak_audience,
         keycloak_client_id=keycloak_client_id,
         keycloak_client_secret=keycloak_client_secret,
-        base_url=base_url,
     )
 
 

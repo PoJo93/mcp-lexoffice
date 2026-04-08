@@ -6,12 +6,7 @@ services:
       - LEXOFFICE_API_KEY=${LEXOFFICE_API_KEY}
       - MCP_TRANSPORT=streamable-http
       - MCP_PORT=${HOST_PORT:-8001}
-      - MCP_AUTH_BASE_URL=${MCP_AUTH_BASE_URL:-}
-      - LEXOFFICE_MCP_API_KEY=${LEXOFFICE_MCP_API_KEY:-}
-      - KEYCLOAK_ISSUER=${KEYCLOAK_ISSUER:-}
-      - KEYCLOAK_AUDIENCE=${KEYCLOAK_AUDIENCE:-mcp-lexoffice}
-      - KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID:-mcp-lexoffice}
-      - KEYCLOAK_CLIENT_SECRET=${KEYCLOAK_CLIENT_SECRET}
+      - MCP_API_KEY=${MCP_API_KEY:-}
       - FASTMCP_HOME=/data/fastmcp
     volumes:
       - fastmcp-data:/data/fastmcp

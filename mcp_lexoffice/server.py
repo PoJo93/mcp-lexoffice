@@ -34,31 +34,11 @@ async def lifespan(mcp: FastMCP):
     yield {"lexoffice": client}
 
 
-def _build_auth():
-    """Build OIDCProxy auth if KEYCLOAK_ISSUER is set, else None."""
-    import os
+from .auth import BearerTokenVerifier
 
-    keycloak_issuer = os.environ.get("KEYCLOAK_ISSUER", "")
-    if not keycloak_issuer:
-        return None
-
-    keycloak_client_id = os.environ.get("KEYCLOAK_CLIENT_ID", "mcp-lexoffice")
-    keycloak_client_secret = os.environ.get("KEYCLOAK_CLIENT_SECRET", "")
-    base_url = os.environ.get("MCP_AUTH_BASE_URL", "")
-
-    if not keycloak_client_secret:
-        logger.warning("KEYCLOAK_CLIENT_SECRET not set — OIDC proxy auth disabled")
-        return None
-
-    from .auth import create_auth
-
-    return create_auth(
-        base_url=base_url,
-        keycloak_issuer=keycloak_issuer,
-        keycloak_client_id=keycloak_client_id,
-        keycloak_client_secret=keycloak_client_secret,
-    )
-
+# Build authentication (bearer token via MCP_API_KEY)
+_api_key = os.getenv("MCP_API_KEY", "")
+_auth = BearerTokenVerifier(api_key=_api_key) if _api_key else None
 
 mcp = FastMCP(
     "Lexware Office",
@@ -76,7 +56,7 @@ mcp = FastMCP(
         ),
     ],
     lifespan=lifespan,
-    auth=_build_auth(),
+    auth=_auth,
 )
 
 

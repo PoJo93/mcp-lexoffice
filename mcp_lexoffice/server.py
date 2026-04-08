@@ -11,7 +11,7 @@ from typing import Annotated, Any
 from fastmcp import FastMCP, Context
 from mcp.types import Icon
 
-from .client import LexofficeClient
+from mcp_lexoffice.client import LexofficeClient
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ async def lifespan(mcp: FastMCP):
     yield {"lexoffice": client}
 
 
-from .auth import BearerTokenVerifier
+from mcp_lexoffice.auth import BearerTokenVerifier
 
 # Build authentication (bearer token via MCP_API_KEY)
 _api_key = os.getenv("MCP_API_KEY", "")

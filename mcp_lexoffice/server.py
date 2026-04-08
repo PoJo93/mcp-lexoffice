@@ -130,7 +130,7 @@ def _build_address(
 
 @mcp.tool
 async def get_profile(ctx: Context) -> str:
-    """Get the Lexware Office organization profile — company name, tax settings, currency."""
+    """[finance] Get the Lexware Office organization profile — company name, tax settings, currency."""
     result = await _client(ctx).get_profile()
     return _fmt(result)
 
@@ -157,7 +157,7 @@ async def create_draft_invoice(
     remark: Annotated[str | None, "Closing remark below line items"] = None,
     tax_rate: Annotated[int | None, "Override tax rate percentage for all line items"] = None,
 ) -> str:
-    """Create a draft invoice in Lexware Office. Returns the invoice ID and a deep link to review it.
+    """[finance] Create a draft invoice in Lexware Office. Returns the invoice ID and a deep link to review it.
 
     Line items example: [{"name": "IT Consulting", "unit_price": 3000, "quantity": 1}]
     Tax regime is auto-detected from the Lexoffice profile. Override per-item via tax_rate field.
@@ -195,7 +195,7 @@ async def finalize_invoice(
     ctx: Context,
     invoice_id: Annotated[str, "UUID of the draft invoice to finalize"],
 ) -> str:
-    """Finalize a draft invoice — assigns an invoice number and makes it non-editable.
+    """[finance] Finalize a draft invoice — assigns an invoice number and makes it non-editable.
     Review the draft in Lexoffice UI before calling this. Cannot be undone."""
     result = await _client(ctx).finalize_invoice(invoice_id)
     result["deepLink"] = _deep_link(invoice_id)
@@ -207,7 +207,7 @@ async def delete_draft_invoice(
     ctx: Context,
     invoice_id: Annotated[str, "UUID of the draft invoice to delete"],
 ) -> str:
-    """Delete a draft invoice. Only works on drafts — finalized invoices cannot be deleted."""
+    """[finance] Delete a draft invoice. Only works on drafts — finalized invoices cannot be deleted."""
     invoice = await _client(ctx).get_invoice(invoice_id)
     status = invoice.get("voucherStatus", "")
     if status != "draft":
@@ -223,7 +223,7 @@ async def send_invoice(
     invoice_id: Annotated[str, "UUID of the finalized invoice"],
     recipient_email: Annotated[str, "Email address to send the invoice to"],
 ) -> str:
-    """Send a finalized invoice by email. The invoice must be finalized first."""
+    """[finance] Send a finalized invoice by email. The invoice must be finalized first."""
     invoice = await _client(ctx).get_invoice(invoice_id)
     status = invoice.get("voucherStatus", "")
     if status == "draft":
@@ -238,7 +238,7 @@ async def get_invoice(
     ctx: Context,
     invoice_id: Annotated[str, "UUID of the invoice"],
 ) -> str:
-    """Get full details for a specific invoice, including a deep link to Lexoffice UI."""
+    """[finance] Get full details for a specific invoice, including a deep link to Lexoffice UI."""
     result = await _client(ctx).get_invoice(invoice_id)
     is_draft = result.get("voucherStatus") == "draft"
     result["deepLink"] = _deep_link(invoice_id, edit=is_draft)
@@ -250,7 +250,7 @@ async def get_invoice_pdf(
     ctx: Context,
     invoice_id: Annotated[str, "UUID of the finalized invoice"],
 ) -> str:
-    """Render and get the document file ID for an invoice PDF. Invoice must be finalized."""
+    """[finance] Render and get the document file ID for an invoice PDF. Invoice must be finalized."""
     result = await _client(ctx).render_invoice_document(invoice_id)
     return _fmt(result)
 
@@ -264,7 +264,7 @@ async def list_invoices(
     ] = None,
     page: Annotated[int, "Page number (0-indexed)"] = 0,
 ) -> str:
-    """List sales invoices, optionally filtered by status. Returns voucher number, contact, amount, and deep links."""
+    """[finance] List sales invoices, optionally filtered by status. Returns voucher number, contact, amount, and deep links."""
     result = await _client(ctx).filter_vouchers(
         "salesinvoice", voucher_status=status, page=page
     )
@@ -293,7 +293,7 @@ async def upload_voucher(
     file_name: Annotated[str, "Original file name (e.g. 'invoice.pdf')"],
     voucher_type: Annotated[str, "Voucher type: purchaseinvoice, receipt, etc."] = "purchaseinvoice",
 ) -> str:
-    """Upload a bill/receipt file to Lexoffice as a voucher for review.
+    """[finance] Upload a bill/receipt file to Lexoffice as a voucher for review.
     Accepts PDF, PNG, or JPG files up to 5MB. The file appears in Lexoffice 'Zu prüfen'."""
     allowed_ext = (".pdf", ".png", ".jpg", ".jpeg")
     if not any(file_name.lower().endswith(ext) for ext in allowed_ext):
@@ -316,7 +316,7 @@ async def list_expenses(
     status: Annotated[str | None, "Filter: open, paidoff, voided (comma-separated)"] = None,
     page: Annotated[int, "Page number (0-indexed)"] = 0,
 ) -> str:
-    """List purchase invoices and expenses."""
+    """[finance] List purchase invoices and expenses."""
     result = await _client(ctx).filter_vouchers(
         "purchaseinvoice", voucher_status=status, page=page
     )
@@ -331,7 +331,7 @@ async def get_financial_overview(
     ctx: Context,
     months: Annotated[int, "Number of months to include (default 6)"] = 6,
 ) -> str:
-    """Get a monthly revenue/expense/net overview. Queries sales and purchase invoices."""
+    """[finance] Get a monthly revenue/expense/net overview. Queries sales and purchase invoices."""
     sales = await _client(ctx).filter_vouchers("salesinvoice", voucher_status="paidoff", size=250)
     purchases = await _client(ctx).filter_vouchers("purchaseinvoice", voucher_status="paidoff", size=250)
     open_invoices = await _client(ctx).filter_vouchers("salesinvoice", voucher_status="open", size=250)
@@ -380,7 +380,7 @@ async def get_payment_status(
     invoice_id: Annotated[str | None, "UUID of a specific invoice"] = None,
     contact_name: Annotated[str | None, "Search open invoices by contact name"] = None,
 ) -> str:
-    """Check payment status for an invoice (by ID) or all open invoices for a contact."""
+    """[finance] Check payment status for an invoice (by ID) or all open invoices for a contact."""
     if invoice_id:
         result = await _client(ctx).get_payments(invoice_id)
         return _fmt(result)
@@ -423,7 +423,7 @@ async def search_contacts(
     role: Annotated[str | None, "Filter: customer, vendor, or both"] = None,
     page: Annotated[int, "Page number (0-indexed)"] = 0,
 ) -> str:
-    """Search and filter contacts in Lexware Office."""
+    """[finance] Search and filter contacts in Lexware Office."""
     customer = None
     vendor = None
     if role == "customer":
@@ -444,7 +444,7 @@ async def get_contact(
     ctx: Context,
     contact_id: Annotated[str, "UUID of the contact"],
 ) -> str:
-    """Get full details for a specific contact, including deep link."""
+    """[finance] Get full details for a specific contact, including deep link."""
     result = await _client(ctx).get_contact(contact_id)
     result["deepLink"] = _contact_link(contact_id)
     return _fmt(result)
@@ -463,7 +463,7 @@ async def create_contact(
     city: Annotated[str | None, "City"] = None,
     country_code: Annotated[str, "ISO country code"] = "DE",
 ) -> str:
-    """Create a new contact (company or person) in Lexware Office."""
+    """[finance] Create a new contact (company or person) in Lexware Office."""
     data: dict[str, Any] = {"version": 0, "roles": {role: {}}}
 
     if company_name:
@@ -506,7 +506,7 @@ async def update_contact(
     last_name: Annotated[str | None, "Updated person last name"] = None,
     email: Annotated[str | None, "Updated email address"] = None,
 ) -> str:
-    """Update an existing contact. Get the current version from get_contact first."""
+    """[finance] Update an existing contact. Get the current version from get_contact first."""
     existing = await _client(ctx).get_contact(contact_id)
     existing["version"] = version
 
@@ -543,7 +543,7 @@ async def create_draft_quotation(
     remark: Annotated[str | None, "Closing remark"] = None,
     tax_rate: Annotated[int | None, "Override tax rate percentage for all line items"] = None,
 ) -> str:
-    """Create a draft quotation (Angebot) in Lexware Office. Returns ID and deep link."""
+    """[finance] Create a draft quotation (Angebot) in Lexware Office. Returns ID and deep link."""
     items = json.loads(line_items)
     tax_config = await _get_tax_config(ctx)
     effective_rate = tax_rate if tax_rate is not None else tax_config["default_rate"]
@@ -574,7 +574,7 @@ async def finalize_quotation(
     ctx: Context,
     quotation_id: Annotated[str, "UUID of the draft quotation"],
 ) -> str:
-    """Finalize a quotation — assigns Angebotsnummer, makes it sendable."""
+    """[finance] Finalize a quotation — assigns Angebotsnummer, makes it sendable."""
     result = await _client(ctx).finalize_quotation(quotation_id)
     result["deepLink"] = _deep_link(quotation_id)
     return _fmt(result)
@@ -585,7 +585,7 @@ async def pursue_quotation_to_invoice(
     ctx: Context,
     quotation_id: Annotated[str, "UUID of the finalized quotation"],
 ) -> str:
-    """Convert a finalized quotation into a draft invoice (Angebot to Rechnung).
+    """[finance] Convert a finalized quotation into a draft invoice (Angebot to Rechnung).
     The quotation must be finalized first."""
     quotation = await _client(ctx).get_quotation(quotation_id)
     status = quotation.get("voucherStatus", "")
@@ -607,7 +607,7 @@ async def create_dunning(
     invoice_id: Annotated[str, "UUID of the overdue invoice"],
     note: Annotated[str | None, "Custom dunning text"] = None,
 ) -> str:
-    """Create a payment reminder (Mahnung) for an overdue invoice."""
+    """[finance] Create a payment reminder (Mahnung) for an overdue invoice."""
     data: dict[str, Any] = {"invoiceId": invoice_id}
     if note:
         data["text"] = note
@@ -622,7 +622,7 @@ async def render_dunning_pdf(
     ctx: Context,
     dunning_id: Annotated[str, "UUID of the dunning"],
 ) -> str:
-    """Render a dunning PDF and get the document file ID."""
+    """[finance] Render a dunning PDF and get the document file ID."""
     result = await _client(ctx).render_dunning_document(dunning_id)
     return _fmt(result)
 
@@ -632,7 +632,7 @@ async def render_dunning_pdf(
 
 @mcp.tool
 async def list_articles(ctx: Context) -> str:
-    """List all configured service articles (reusable line items)."""
+    """[finance] List all configured service articles (reusable line items)."""
     result = await _client(ctx).list_articles()
     return _fmt(result)
 
@@ -647,7 +647,7 @@ async def create_article(
     description: Annotated[str | None, "Article description"] = None,
     tax_rate: Annotated[int | None, "Override tax rate percentage"] = None,
 ) -> str:
-    """Create a reusable service article in Lexware Office. Tax rate is auto-detected from profile."""
+    """[finance] Create a reusable service article in Lexware Office. Tax rate is auto-detected from profile."""
     tax_config = await _get_tax_config(ctx)
     effective_rate = tax_rate if tax_rate is not None else tax_config["default_rate"]
     data: dict[str, Any] = {
@@ -671,7 +671,7 @@ async def get_article(
     ctx: Context,
     article_id: Annotated[str, "UUID of the article"],
 ) -> str:
-    """Get full details for a specific article."""
+    """[finance] Get full details for a specific article."""
     result = await _client(ctx).get_article(article_id)
     return _fmt(result)
 
@@ -686,7 +686,7 @@ async def update_article(
     unit_name: Annotated[str | None, "Updated unit name"] = None,
     description: Annotated[str | None, "Updated description"] = None,
 ) -> str:
-    """Update an existing article. Get the current version from get_article first."""
+    """[finance] Update an existing article. Get the current version from get_article first."""
     existing = await _client(ctx).get_article(article_id)
     existing["version"] = version
     if name:
@@ -715,7 +715,7 @@ async def list_vouchers(
     status: Annotated[str | None, "Filter by status (comma-separated)"] = None,
     page: Annotated[int, "Page number (0-indexed)"] = 0,
 ) -> str:
-    """List vouchers of a given type with optional status filter."""
+    """[finance] List vouchers of a given type with optional status filter."""
     result = await _client(ctx).filter_vouchers(
         voucher_type, voucher_status=status, page=page
     )
@@ -730,7 +730,7 @@ async def list_vouchers(
 
 @mcp.tool
 async def list_payment_conditions(ctx: Context) -> str:
-    """List all configured payment conditions (Zahlungsbedingungen)."""
+    """[finance] List all configured payment conditions (Zahlungsbedingungen)."""
     result = await _client(ctx).list_payment_conditions()
     return _fmt(result)
 
@@ -740,7 +740,7 @@ async def list_payment_conditions(ctx: Context) -> str:
 
 @mcp.tool
 async def list_countries(ctx: Context) -> str:
-    """List all countries with their tax classification (DE, intraCommunity, thirdPartyCountry)."""
+    """[finance] List all countries with their tax classification (DE, intraCommunity, thirdPartyCountry)."""
     result = await _client(ctx).list_countries()
     return _fmt(result)
 

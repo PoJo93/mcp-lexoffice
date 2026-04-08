@@ -423,7 +423,9 @@ async def search_contacts(
     role: Annotated[str | None, "Filter: customer, vendor, or both"] = None,
     page: Annotated[int, "Page number (0-indexed)"] = 0,
 ) -> str:
-    """[finance] Search and filter contacts in Lexware Office."""
+    """[finance] Search and filter contacts in Lexware Office.
+
+    Disambiguation: For accounting/invoice contacts → lexoffice. For CRM/chat contacts → watermelon."""
     customer = None
     vendor = None
     if role == "customer":
@@ -463,7 +465,9 @@ async def create_contact(
     city: Annotated[str | None, "City"] = None,
     country_code: Annotated[str, "ISO country code"] = "DE",
 ) -> str:
-    """[finance] Create a new contact (company or person) in Lexware Office."""
+    """[finance] Create a new contact (company or person) in Lexware Office.
+
+    Disambiguation: For accounting/invoice contacts → lexoffice. For CRM/chat contacts → watermelon."""
     data: dict[str, Any] = {"version": 0, "roles": {role: {}}}
 
     if company_name:

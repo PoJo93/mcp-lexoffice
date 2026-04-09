@@ -1,10 +1,10 @@
 [project]
 name = "mcp-lexoffice"
-version = "0.1.0"
+version = "0.2.0"
 description = "MCP server for Lexware Office (formerly Lexoffice) — invoices, contacts, and accounting"
 requires-python = ">=3.11"
 dependencies = [
-    "fastmcp>=3.1.0",
+    "fastmcp>=3.2.2",
     "httpx>=0.28.0",
     "python-dotenv>=1.0.0",
 ]

@@ -316,7 +316,9 @@ async def list_expenses(
     status: Annotated[str | None, "Filter: open, paidoff, voided (comma-separated)"] = None,
     page: Annotated[int, "Page number (0-indexed)"] = 0,
 ) -> str:
-    """[finance] List purchase invoices and expenses."""
+    """[finance] List purchase invoices and expenses.
+
+    Returns purchase invoices and expenses. For filtering by voucher type, use list_vouchers instead."""
     result = await _client(ctx).filter_vouchers(
         "purchaseinvoice", voucher_status=status, page=page
     )
@@ -331,7 +333,9 @@ async def get_financial_overview(
     ctx: Context,
     months: Annotated[int, "Number of months to include (default 6)"] = 6,
 ) -> str:
-    """[finance] Get a monthly revenue/expense/net overview. Queries sales and purchase invoices."""
+    """[finance] Get a monthly revenue/expense/net overview. Queries sales and purchase invoices.
+
+    months defaults to 6, maximum 12. Large ranges may be slow as it queries all settled invoices."""
     sales = await _client(ctx).filter_vouchers("salesinvoice", voucher_status="paidoff", size=250)
     purchases = await _client(ctx).filter_vouchers("purchaseinvoice", voucher_status="paidoff", size=250)
     open_invoices = await _client(ctx).filter_vouchers("salesinvoice", voucher_status="open", size=250)
@@ -510,7 +514,9 @@ async def update_contact(
     last_name: Annotated[str | None, "Updated person last name"] = None,
     email: Annotated[str | None, "Updated email address"] = None,
 ) -> str:
-    """[finance] Update an existing contact. Get the current version from get_contact first."""
+    """[finance] Update an existing contact. Get the current version from get_contact first.
+
+    Note: The Lexoffice API uses optimistic locking. Call get_contact first to obtain the current `version` field, then pass it here."""
     existing = await _client(ctx).get_contact(contact_id)
     existing["version"] = version
 
@@ -690,7 +696,9 @@ async def update_article(
     unit_name: Annotated[str | None, "Updated unit name"] = None,
     description: Annotated[str | None, "Updated description"] = None,
 ) -> str:
-    """[finance] Update an existing article. Get the current version from get_article first."""
+    """[finance] Update an existing article. Get the current version from get_article first.
+
+    Call get_article first to obtain the current `version` field."""
     existing = await _client(ctx).get_article(article_id)
     existing["version"] = version
     if name:
@@ -719,7 +727,9 @@ async def list_vouchers(
     status: Annotated[str | None, "Filter by status (comma-separated)"] = None,
     page: Annotated[int, "Page number (0-indexed)"] = 0,
 ) -> str:
-    """[finance] List vouchers of a given type with optional status filter."""
+    """[finance] List vouchers of a given type with optional status filter.
+
+    For a simpler view of purchase invoices without type filtering, use list_expenses."""
     result = await _client(ctx).filter_vouchers(
         voucher_type, voucher_status=status, page=page
     )

@@ -389,6 +389,59 @@ async def test_create_draft_invoice_currency():
     assert call_data["totalPrice"]["currency"] == "USD"
 
 
+async def test_create_draft_invoice_with_contact_id_discards_address_fields():
+    """contact_id sets address.contactId + linkedContactId; explicit street/zip/city are discarded."""
+    from mcp_lexoffice.server import create_draft_invoice
+
+    ctx = make_ctx({"create_invoice": {"id": "inv-contact-1"}})
+    result = await create_draft_invoice(
+        ctx,
+        recipient_name="Acme GmbH",
+        line_items='[{"name": "Consulting", "unit_price": 3000}]',
+        contact_id="c-acme",
+        street="Ignored Str. 1",
+        zip_code="99999",
+        city="Nowhere",
+        country_code="AT",
+    )
+    parsed = json.loads(result)
+    assert parsed["linkedContactId"] == "c-acme"
+
+    call_data = ctx.lifespan_context["lexoffice"].create_invoice.call_args[0][0]
+    addr = call_data["address"]
+    assert addr["contactId"] == "c-acme"
+    assert addr["name"] == "Acme GmbH"
+    assert addr["countryCode"] == "AT"
+    assert "street" not in addr
+    assert "zip" not in addr
+    assert "city" not in addr
+
+
+async def test_create_draft_invoice_without_contact_id_omits_linked_contact_id():
+    """Regression: without contact_id, payload stays free-form and linkedContactId is absent."""
+    from mcp_lexoffice.server import create_draft_invoice
+
+    ctx = make_ctx({"create_invoice": {"id": "inv-contact-3"}})
+    result = await create_draft_invoice(
+        ctx,
+        recipient_name="Freeform Kunde",
+        line_items='[{"name": "A", "unit_price": 1}]',
+        street="Musterstr. 1",
+        zip_code="12345",
+        city="Berlin",
+    )
+    parsed = json.loads(result)
+    assert "linkedContactId" not in parsed
+
+    call_data = ctx.lifespan_context["lexoffice"].create_invoice.call_args[0][0]
+    addr = call_data["address"]
+    assert "contactId" not in addr
+    assert addr["name"] == "Freeform Kunde"
+    assert addr["street"] == "Musterstr. 1"
+    assert addr["zip"] == "12345"
+    assert addr["city"] == "Berlin"
+
+
 async def test_finalize_invoice_tool():
     from mcp_lexoffice.server import finalize_invoice
 

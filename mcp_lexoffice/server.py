@@ -47,7 +47,10 @@ mcp = FastMCP(
         "and accounting. Tax regime is auto-detected from the Lexoffice profile "
         "(vatfree, net, or gross). Default payment terms: Zahlbar sofort, rein netto. "
         "Service catalog: Digitale Sprechstunde (EUR 995 Pauschal), Consulting "
-        "(EUR 150/Stunde), Platform Development (EUR 1200/Tag)."
+        "(EUR 150/Stunde), Platform Development (EUR 1200/Tag). "
+        "When creating invoices or quotations for existing contacts, first call "
+        "search_contacts and pass the resulting contact_id to create_draft_invoice so "
+        "Lexoffice auto-attaches the primary contact person (Ansprechpartner)."
     ),
     icons=[
         Icon(
@@ -141,11 +144,15 @@ async def get_profile(ctx: Context) -> str:
 @mcp.tool
 async def create_draft_invoice(
     ctx: Context,
-    recipient_name: Annotated[str, "Company or person name for the invoice recipient"],
+    recipient_name: Annotated[str, "Company or person name for the invoice recipient (always required, even when contact_id is set — used as display name)"],
     line_items: Annotated[
         str,
         "JSON array of line items. Each: {name, unit_price, quantity?, unit_name?, description?, tax_rate?}",
     ],
+    contact_id: Annotated[
+        str | None,
+        "UUID of an existing Lexoffice contact. When set, the invoice is linked to this contact and Lexoffice auto-attaches the primary contact person (Ansprechpartner). Obtain via search_contacts first. Note: street/zip_code/city are ignored when contact_id is set — the address is pulled from the contact record.",
+    ] = None,
     street: Annotated[str | None, "Recipient street address"] = None,
     zip_code: Annotated[str | None, "Recipient postal code"] = None,
     city: Annotated[str | None, "Recipient city"] = None,
@@ -165,9 +172,14 @@ async def create_draft_invoice(
     items = json.loads(line_items)
     tax_config = await _get_tax_config(ctx)
     effective_rate = tax_rate if tax_rate is not None else tax_config["default_rate"]
+    if contact_id:
+        address = _build_address(recipient_name, country_code=country_code)
+        address["contactId"] = contact_id
+    else:
+        address = _build_address(recipient_name, street, zip_code, city, country_code)
     data: dict[str, Any] = {
         "voucherDate": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000+00:00"),
-        "address": _build_address(recipient_name, street, zip_code, city, country_code),
+        "address": address,
         "lineItems": _build_line_items(items, default_tax_rate=effective_rate),
         "totalPrice": {"currency": currency},
         "taxConditions": {"taxType": tax_config["tax_type"]},
@@ -187,6 +199,8 @@ async def create_draft_invoice(
     result = await _client(ctx).create_invoice(data)
     invoice_id = result.get("id", "")
     result["deepLink"] = _deep_link(invoice_id, edit=True)
+    if contact_id:
+        result["linkedContactId"] = contact_id
     return _fmt(result)
 
 

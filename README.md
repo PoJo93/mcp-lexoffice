@@ -127,14 +127,14 @@ mcp-lexoffice.example.com {
 
 | Tool | Description |
 |------|-------------|
-| `create_draft_invoice` | Create a draft invoice with named parameters (recipient, line items, payment terms). Returns ID + Lexoffice deep link. |
+| `create_draft_invoice` | Create a draft invoice with named parameters (recipient, line items, payment terms). Accepts optional `contact_id` to link an existing Lexoffice contact — Lexoffice then auto-attaches the primary contact person (Ansprechpartner). Returns ID + Lexoffice deep link. |
 | `finalize_invoice` | Finalize a draft — assigns invoice number, makes non-editable. **Cannot be undone.** |
 | `send_invoice` | Send a finalized invoice by email. Validates status before sending. |
 | `get_invoice` | Get full invoice details with deep link (edit link for drafts, view link for finalized). |
 | `get_invoice_pdf` | Render and get the document file ID for a finalized invoice PDF. |
 | `list_invoices` | List sales invoices with status filter. Computes `daysOverdue` for overdue items. |
 
-**Invoice flow**: `create_draft_invoice` → review in Lexoffice UI → `finalize_invoice` → `send_invoice`
+**Invoice flow**: `search_contacts` (to get `contact_id` for existing customers) → `create_draft_invoice` → review in Lexoffice UI → `finalize_invoice` → `send_invoice`
 
 ### Financial Queries
 

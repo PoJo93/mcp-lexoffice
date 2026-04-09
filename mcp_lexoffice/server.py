@@ -1,5 +1,6 @@
 """MCP server for Lexware Office (formerly Lexoffice)."""
 
+import asyncio
 import base64
 import json
 import logging
@@ -45,7 +46,9 @@ mcp = FastMCP(
     instructions=(
         "MCP server for Lexware Office (Lexoffice) — invoices, contacts, quotations, "
         "and accounting. Tax regime is auto-detected from the Lexoffice profile "
-        "(vatfree, net, or gross). Default payment terms: Zahlbar sofort, rein netto. "
+        "(vatfree, net, or gross). Payment conditions are loaded from the Lexware profile — "
+        "omit payment_condition_id to use the organization default, or pass a UUID from "
+        "list_payment_conditions. "
         "Service catalog: Digitale Sprechstunde (EUR 995 Pauschal), Consulting "
         "(EUR 150/Stunde), Platform Development (EUR 1200/Tag). "
         "When creating invoices or quotations for existing contacts, first call "
@@ -88,6 +91,78 @@ async def _get_tax_config(ctx: Context) -> dict:
     config = {"tax_type": tax_type, "default_rate": DEFAULT_TAX_RATE.get(tax_type, 0)}
     lc["tax_config"] = config
     return config
+
+
+async def _get_payment_conditions(ctx: Context, *, refresh: bool = False) -> list[dict]:
+    """Fetch and lazy-cache the organization's configured payment conditions.
+
+    Pass refresh=True to force a reload (e.g. after a condition ID was not found
+    in the cached list — the list may have been updated server-side)."""
+    lc = ctx.lifespan_context
+    if not refresh and "payment_conditions" in lc:
+        return lc["payment_conditions"]
+    conditions = await _client(ctx).list_payment_conditions()
+    lc["payment_conditions"] = conditions
+    return conditions
+
+
+def _embed_payment_condition(condition: dict) -> dict:
+    """Copy only the fields POST /invoices accepts (whitelist, strips metadata)."""
+    embed: dict[str, Any] = {
+        "paymentTermLabel": condition.get("paymentTermLabel", ""),
+        "paymentTermDuration": condition.get("paymentTermDuration", 0),
+    }
+    discount = condition.get("paymentDiscountConditions")
+    if discount is not None:
+        embed["paymentDiscountConditions"] = discount
+    return embed
+
+
+def _format_condition_listing(conditions: list[dict]) -> str:
+    return ", ".join(
+        f"{c.get('id', '?')}: {c.get('paymentTermLabel', '')}" for c in conditions
+    )
+
+
+async def _resolve_payment_condition(
+    ctx: Context, condition_id: str | None
+) -> tuple[dict | None, dict | None]:
+    """Resolve a payment condition for an invoice/quotation POST body.
+
+    Returns a (payload, error) tuple — exactly one is not None:
+      - (embed_dict, None): paymentConditions object ready for embedding
+      - (None, None): caller should omit paymentConditions (no conditions configured)
+      - (None, error_dict): structured error to return to the caller via _fmt
+    """
+    conditions = await _get_payment_conditions(ctx)
+    if condition_id:
+        match = next((c for c in conditions if c.get("id") == condition_id), None)
+        if match is None:
+            conditions = await _get_payment_conditions(ctx, refresh=True)
+            match = next((c for c in conditions if c.get("id") == condition_id), None)
+        if match is None:
+            return None, {
+                "error": (
+                    f"Payment condition {condition_id} not found. "
+                    f"Available: [{_format_condition_listing(conditions)}]. "
+                    f"Use list_payment_conditions to see configured conditions."
+                )
+            }
+        return _embed_payment_condition(match), None
+
+    if not conditions:
+        return None, None
+
+    default = next((c for c in conditions if c.get("organizationDefault")), None)
+    if default is None:
+        return None, {
+            "error": (
+                "No organization default payment condition configured. "
+                "Specify payment_condition_id explicitly. "
+                f"Available: [{_format_condition_listing(conditions)}]"
+            )
+        }
+    return _embed_payment_condition(default), None
 
 
 def _build_line_items(items: list[dict], *, default_tax_rate: int = 0) -> list[dict]:
@@ -158,7 +233,10 @@ async def create_draft_invoice(
     city: Annotated[str | None, "Recipient city"] = None,
     country_code: Annotated[str, "ISO country code"] = "DE",
     currency: Annotated[str, "Currency code"] = "EUR",
-    payment_term_duration: Annotated[int | None, "Payment term in days (e.g. 14)"] = None,
+    payment_condition_id: Annotated[
+        str | None,
+        "UUID of a configured Lexware payment condition (from list_payment_conditions). If omitted, the organization default is used.",
+    ] = None,
     title: Annotated[str, "Invoice title"] = "Rechnung",
     introduction: Annotated[str | None, "Introduction text above line items"] = None,
     remark: Annotated[str | None, "Closing remark below line items"] = None,
@@ -168,9 +246,16 @@ async def create_draft_invoice(
 
     Line items example: [{"name": "IT Consulting", "unit_price": 3000, "quantity": 1}]
     Tax regime is auto-detected from the Lexoffice profile. Override per-item via tax_rate field.
+    Payment conditions come from the Lexware profile: omit payment_condition_id to use the
+    organization default, or pass a UUID obtained via list_payment_conditions.
     """
     items = json.loads(line_items)
-    tax_config = await _get_tax_config(ctx)
+    tax_config, (pc, pc_error) = await asyncio.gather(
+        _get_tax_config(ctx),
+        _resolve_payment_condition(ctx, payment_condition_id),
+    )
+    if pc_error:
+        return _fmt(pc_error)
     effective_rate = tax_rate if tax_rate is not None else tax_config["default_rate"]
     if contact_id:
         address = _build_address(recipient_name, country_code=country_code)
@@ -190,11 +275,8 @@ async def create_draft_invoice(
         data["introduction"] = introduction
     if remark:
         data["remark"] = remark
-    if payment_term_duration:
-        data["paymentConditions"] = {
-            "paymentTermLabel": f"{payment_term_duration} Tage",
-            "paymentTermDuration": payment_term_duration,
-        }
+    if pc:
+        data["paymentConditions"] = pc
 
     result = await _client(ctx).create_invoice(data)
     invoice_id = result.get("id", "")
@@ -562,14 +644,27 @@ async def create_draft_quotation(
     country_code: Annotated[str, "ISO country code"] = "DE",
     currency: Annotated[str, "Currency code"] = "EUR",
     expiration_date: Annotated[str | None, "Quotation expiry date (ISO format)"] = None,
+    payment_condition_id: Annotated[
+        str | None,
+        "UUID of a configured Lexware payment condition (from list_payment_conditions). If omitted, the organization default is used.",
+    ] = None,
     title: Annotated[str, "Quotation title"] = "Angebot",
     introduction: Annotated[str | None, "Introduction text"] = None,
     remark: Annotated[str | None, "Closing remark"] = None,
     tax_rate: Annotated[int | None, "Override tax rate percentage for all line items"] = None,
 ) -> str:
-    """[finance] Create a draft quotation (Angebot) in Lexware Office. Returns ID and deep link."""
+    """[finance] Create a draft quotation (Angebot) in Lexware Office. Returns ID and deep link.
+
+    Payment conditions come from the Lexware profile: omit payment_condition_id to use the
+    organization default, or pass a UUID obtained via list_payment_conditions.
+    """
     items = json.loads(line_items)
-    tax_config = await _get_tax_config(ctx)
+    tax_config, (pc, pc_error) = await asyncio.gather(
+        _get_tax_config(ctx),
+        _resolve_payment_condition(ctx, payment_condition_id),
+    )
+    if pc_error:
+        return _fmt(pc_error)
     effective_rate = tax_rate if tax_rate is not None else tax_config["default_rate"]
     data: dict[str, Any] = {
         "voucherDate": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000+00:00"),
@@ -586,6 +681,8 @@ async def create_draft_quotation(
         data["remark"] = remark
     if expiration_date:
         data["expirationDate"] = expiration_date
+    if pc:
+        data["paymentConditions"] = pc
 
     result = await _client(ctx).create_quotation(data)
     qid = result.get("id", "")

@@ -17,6 +17,7 @@ from mcp_lexoffice.server import (
     _contact_link,
     _deep_link,
     _fmt,
+    _get_payment_conditions,
     _get_tax_config,
     mcp,
 )
@@ -32,8 +33,23 @@ class FakeContext:
         self.lifespan_context = {"lexoffice": lexoffice_client}
 
 
-def make_ctx(method_responses: dict[str, object], *, tax_type: str = "vatfree") -> FakeContext:
-    """Create a FakeContext with a mock LexofficeClient."""
+_SENTINEL = object()
+
+
+def make_ctx(
+    method_responses: dict[str, object],
+    *,
+    tax_type: str = "vatfree",
+    payment_conditions: object = _SENTINEL,
+) -> FakeContext:
+    """Create a FakeContext with a mock LexofficeClient.
+
+    By default the payment_conditions cache is pre-filled with an empty list so
+    _resolve_payment_condition skips embedding — this keeps invoice/quotation
+    tests that don't care about payment conditions independent of that feature.
+    Pass payment_conditions=None to leave the cache unset (forcing a real
+    list_payment_conditions call), or pass an explicit list to seed it.
+    """
     client = AsyncMock()
     for method, response in method_responses.items():
         getattr(client, method).return_value = response
@@ -42,6 +58,10 @@ def make_ctx(method_responses: dict[str, object], *, tax_type: str = "vatfree") 
         "tax_type": tax_type,
         "default_rate": DEFAULT_TAX_RATE.get(tax_type, 0),
     }
+    if payment_conditions is _SENTINEL:
+        ctx.lifespan_context["payment_conditions"] = []
+    elif payment_conditions is not None:
+        ctx.lifespan_context["payment_conditions"] = payment_conditions
     return ctx
 
 
@@ -268,25 +288,161 @@ async def test_create_draft_invoice_deep_link_is_edit():
     assert "/edit/" in parsed["deepLink"]
 
 
-async def test_create_draft_invoice_with_payment_terms():
+# ── Payment conditions: create_draft_invoice ────────────────────────
+
+
+async def test_create_draft_invoice_with_explicit_condition_id():
     from mcp_lexoffice.server import create_draft_invoice
 
-    ctx = make_ctx({"create_invoice": {"id": "inv-2"}})
+    ctx = make_ctx(
+        {"create_invoice": {"id": "inv-pc-1"}},
+        payment_conditions=[
+            {
+                "id": "pc-1",
+                "organizationId": "org-1",
+                "paymentTermLabel": "Netto 14",
+                "paymentTermDuration": 14,
+                "organizationDefault": False,
+            }
+        ],
+    )
     await create_draft_invoice(
         ctx,
         recipient_name="Test",
         line_items='[{"name": "A", "unit_price": 1}]',
-        payment_term_duration=14,
+        payment_condition_id="pc-1",
     )
     call_data = ctx.lifespan_context["lexoffice"].create_invoice.call_args[0][0]
-    assert call_data["paymentConditions"]["paymentTermDuration"] == 14
-    assert "14 Tage" in call_data["paymentConditions"]["paymentTermLabel"]
+    pc = call_data["paymentConditions"]
+    assert pc["paymentTermLabel"] == "Netto 14"
+    assert pc["paymentTermDuration"] == 14
+    # Whitelist: metadata must not be embedded
+    assert "id" not in pc
+    assert "organizationId" not in pc
+    assert "organizationDefault" not in pc
 
 
-async def test_create_draft_invoice_no_payment_terms():
+async def test_create_draft_invoice_uses_organization_default():
     from mcp_lexoffice.server import create_draft_invoice
 
-    ctx = make_ctx({"create_invoice": {"id": "inv-3"}})
+    ctx = make_ctx(
+        {"create_invoice": {"id": "inv-pc-2"}},
+        payment_conditions=[
+            {
+                "id": "pc-other",
+                "paymentTermLabel": "Netto 7",
+                "paymentTermDuration": 7,
+                "organizationDefault": False,
+            },
+            {
+                "id": "pc-default",
+                "paymentTermLabel": "Zahlbar sofort",
+                "paymentTermDuration": 0,
+                "organizationDefault": True,
+            },
+        ],
+    )
+    await create_draft_invoice(
+        ctx,
+        recipient_name="Test",
+        line_items='[{"name": "A", "unit_price": 1}]',
+    )
+    call_data = ctx.lifespan_context["lexoffice"].create_invoice.call_args[0][0]
+    pc = call_data["paymentConditions"]
+    assert pc["paymentTermLabel"] == "Zahlbar sofort"
+    assert pc["paymentTermDuration"] == 0
+    assert "id" not in pc
+
+
+async def test_create_draft_invoice_explicit_id_overrides_default():
+    from mcp_lexoffice.server import create_draft_invoice
+
+    ctx = make_ctx(
+        {"create_invoice": {"id": "inv-pc-3"}},
+        payment_conditions=[
+            {
+                "id": "pc-default",
+                "paymentTermLabel": "Default Label",
+                "paymentTermDuration": 0,
+                "organizationDefault": True,
+            },
+            {
+                "id": "pc-other",
+                "paymentTermLabel": "Netto 30",
+                "paymentTermDuration": 30,
+                "organizationDefault": False,
+            },
+        ],
+    )
+    await create_draft_invoice(
+        ctx,
+        recipient_name="Test",
+        line_items='[{"name": "A", "unit_price": 1}]',
+        payment_condition_id="pc-other",
+    )
+    call_data = ctx.lifespan_context["lexoffice"].create_invoice.call_args[0][0]
+    assert call_data["paymentConditions"]["paymentTermLabel"] == "Netto 30"
+    assert call_data["paymentConditions"]["paymentTermDuration"] == 30
+
+
+async def test_create_draft_invoice_invalid_id_refreshes_and_succeeds():
+    from mcp_lexoffice.server import create_draft_invoice
+
+    # Cache starts empty; on miss, _get_payment_conditions(refresh=True) is called
+    # and returns a list that contains the requested ID.
+    ctx = make_ctx(
+        {"create_invoice": {"id": "inv-pc-4"}},
+        payment_conditions=[],  # empty cache, will trigger refresh
+    )
+    # Configure list_payment_conditions mock for the refresh call
+    ctx.lifespan_context["lexoffice"].list_payment_conditions.return_value = [
+        {
+            "id": "pc-new",
+            "paymentTermLabel": "Refreshed Label",
+            "paymentTermDuration": 21,
+            "organizationDefault": False,
+        }
+    ]
+    await create_draft_invoice(
+        ctx,
+        recipient_name="Test",
+        line_items='[{"name": "A", "unit_price": 1}]',
+        payment_condition_id="pc-new",
+    )
+    call_data = ctx.lifespan_context["lexoffice"].create_invoice.call_args[0][0]
+    assert call_data["paymentConditions"]["paymentTermLabel"] == "Refreshed Label"
+    assert ctx.lifespan_context["lexoffice"].list_payment_conditions.call_count == 1
+
+
+async def test_create_draft_invoice_invalid_id_returns_error_after_refresh():
+    from mcp_lexoffice.server import create_draft_invoice
+
+    ctx = make_ctx(
+        {"create_invoice": {"id": "inv-pc-5"}},
+        payment_conditions=[],
+    )
+    # Refresh also returns empty → still no match → structured error
+    ctx.lifespan_context["lexoffice"].list_payment_conditions.return_value = []
+    result = await create_draft_invoice(
+        ctx,
+        recipient_name="Test",
+        line_items='[{"name": "A", "unit_price": 1}]',
+        payment_condition_id="pc-missing",
+    )
+    parsed = json.loads(result)
+    assert "error" in parsed
+    assert "pc-missing" in parsed["error"]
+    # create_invoice must not have been called
+    ctx.lifespan_context["lexoffice"].create_invoice.assert_not_called()
+
+
+async def test_create_draft_invoice_empty_conditions_skips_field():
+    from mcp_lexoffice.server import create_draft_invoice
+
+    ctx = make_ctx(
+        {"create_invoice": {"id": "inv-pc-6"}},
+        payment_conditions=[],
+    )
     await create_draft_invoice(
         ctx,
         recipient_name="Test",
@@ -294,6 +450,115 @@ async def test_create_draft_invoice_no_payment_terms():
     )
     call_data = ctx.lifespan_context["lexoffice"].create_invoice.call_args[0][0]
     assert "paymentConditions" not in call_data
+
+
+async def test_create_draft_invoice_no_default_marked_returns_error():
+    from mcp_lexoffice.server import create_draft_invoice
+
+    ctx = make_ctx(
+        {"create_invoice": {"id": "inv-pc-7"}},
+        payment_conditions=[
+            {
+                "id": "pc-a",
+                "paymentTermLabel": "Netto 7",
+                "paymentTermDuration": 7,
+                "organizationDefault": False,
+            },
+            {
+                "id": "pc-b",
+                "paymentTermLabel": "Netto 14",
+                "paymentTermDuration": 14,
+                "organizationDefault": False,
+            },
+        ],
+    )
+    result = await create_draft_invoice(
+        ctx,
+        recipient_name="Test",
+        line_items='[{"name": "A", "unit_price": 1}]',
+    )
+    parsed = json.loads(result)
+    assert "error" in parsed
+    assert "pc-a" in parsed["error"]
+    assert "pc-b" in parsed["error"]
+    ctx.lifespan_context["lexoffice"].create_invoice.assert_not_called()
+
+
+async def test_create_draft_invoice_preserves_discount_conditions():
+    from mcp_lexoffice.server import create_draft_invoice
+
+    discount = {
+        "paymentDiscountType": "PERCENTAGE",
+        "paymentDiscountValue": 2,
+        "paymentDiscountRange": 10,
+    }
+    ctx = make_ctx(
+        {"create_invoice": {"id": "inv-pc-8"}},
+        payment_conditions=[
+            {
+                "id": "pc-discount",
+                "paymentTermLabel": "2% Skonto 10 Tage, sonst 30",
+                "paymentTermDuration": 30,
+                "paymentDiscountConditions": discount,
+                "organizationDefault": True,
+            }
+        ],
+    )
+    await create_draft_invoice(
+        ctx,
+        recipient_name="Test",
+        line_items='[{"name": "A", "unit_price": 1}]',
+    )
+    call_data = ctx.lifespan_context["lexoffice"].create_invoice.call_args[0][0]
+    assert call_data["paymentConditions"]["paymentDiscountConditions"] == discount
+
+
+async def test_create_draft_invoice_payment_term_duration_zero():
+    from mcp_lexoffice.server import create_draft_invoice
+
+    ctx = make_ctx(
+        {"create_invoice": {"id": "inv-pc-9"}},
+        payment_conditions=[
+            {
+                "id": "pc-sofort",
+                "paymentTermLabel": "Zahlbar sofort, rein netto",
+                "paymentTermDuration": 0,
+                "organizationDefault": True,
+            }
+        ],
+    )
+    await create_draft_invoice(
+        ctx,
+        recipient_name="Test",
+        line_items='[{"name": "A", "unit_price": 1}]',
+    )
+    call_data = ctx.lifespan_context["lexoffice"].create_invoice.call_args[0][0]
+    assert call_data["paymentConditions"]["paymentTermDuration"] == 0
+    assert "Zahlbar sofort" in call_data["paymentConditions"]["paymentTermLabel"]
+
+
+async def test_create_draft_quotation_uses_organization_default():
+    from mcp_lexoffice.server import create_draft_quotation
+
+    ctx = make_ctx(
+        {"create_quotation": {"id": "q-pc-1"}},
+        payment_conditions=[
+            {
+                "id": "pc-default",
+                "paymentTermLabel": "Netto 14",
+                "paymentTermDuration": 14,
+                "organizationDefault": True,
+            }
+        ],
+    )
+    await create_draft_quotation(
+        ctx,
+        recipient_name="Test",
+        line_items='[{"name": "A", "unit_price": 1}]',
+    )
+    call_data = ctx.lifespan_context["lexoffice"].create_quotation.call_args[0][0]
+    assert call_data["paymentConditions"]["paymentTermLabel"] == "Netto 14"
+    assert call_data["paymentConditions"]["paymentTermDuration"] == 14
 
 
 async def test_create_draft_invoice_with_introduction_and_remark():
@@ -1666,6 +1931,38 @@ async def test_get_tax_config_caches():
     config2 = await _get_tax_config(ctx)
     assert config1 is config2
     client.get_profile.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_get_payment_conditions_caches():
+    """Second call should use cached value, not call list_payment_conditions again."""
+    client = AsyncMock()
+    client.list_payment_conditions.return_value = [
+        {"id": "pc-1", "organizationDefault": True}
+    ]
+    ctx = FakeContext(client)
+    first = await _get_payment_conditions(ctx)
+    second = await _get_payment_conditions(ctx)
+    assert first is second
+    client.list_payment_conditions.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_get_payment_conditions_refresh_forces_reload():
+    """refresh=True should bypass the cache and fetch again."""
+    client = AsyncMock()
+    client.list_payment_conditions.side_effect = [
+        [{"id": "pc-1"}],
+        [{"id": "pc-2"}],
+    ]
+    ctx = FakeContext(client)
+    first = await _get_payment_conditions(ctx)
+    second = await _get_payment_conditions(ctx, refresh=True)
+    assert first == [{"id": "pc-1"}]
+    assert second == [{"id": "pc-2"}]
+    assert client.list_payment_conditions.call_count == 2
+    # Cache must be updated after refresh
+    assert ctx.lifespan_context["payment_conditions"] == [{"id": "pc-2"}]
 
 
 @pytest.mark.anyio

@@ -127,7 +127,7 @@ mcp-lexoffice.example.com {
 
 | Tool | Description |
 |------|-------------|
-| `create_draft_invoice` | Create a draft invoice with named parameters (recipient, line items, payment terms). Accepts optional `contact_id` to link an existing Lexoffice contact — Lexoffice then auto-attaches the primary contact person (Ansprechpartner). Returns ID + Lexoffice deep link. |
+| `create_draft_invoice` | Create a draft invoice with named parameters (recipient, line items, `payment_condition_id`). Payment conditions are pulled from the Lexware profile — omit `payment_condition_id` to use the organization default. Accepts optional `contact_id` to link an existing Lexoffice contact — Lexoffice then auto-attaches the primary contact person (Ansprechpartner). Returns ID + Lexoffice deep link. |
 | `finalize_invoice` | Finalize a draft — assigns invoice number, makes non-editable. **Cannot be undone.** |
 | `send_invoice` | Send a finalized invoice by email. Validates status before sending. |
 | `get_invoice` | Get full invoice details with deep link (edit link for drafts, view link for finalized). |
